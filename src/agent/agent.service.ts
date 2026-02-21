@@ -17,11 +17,42 @@ export class AgentService {
         private readonly runStream: RunStreamService,
     ) { }
 
+    startAgentRun(intent: string, pubkey: string): AgentRunResult {
+        const runId = this.initializeRun(intent, pubkey);
+
+        void this.executeAgentWithRunId(intent, pubkey, runId).catch((err: any) => {
+            const errorMessage = err?.message || 'Unknown execution error';
+            this.logger.error(`[${runId}] Agent background execution error: ${errorMessage}`);
+            this.runStream.emitComplete(runId, {
+                runId,
+                steps: [],
+                rejection: {
+                    reason: `Agent execution failed: ${errorMessage}`,
+                    policyField: 'agent_execution',
+                },
+            });
+        });
+
+        return { runId, steps: [] };
+    }
+
     async executeAgent(intent: string, pubkey: string): Promise<AgentRunResult> {
+        const runId = this.initializeRun(intent, pubkey);
+        return this.executeAgentWithRunId(intent, pubkey, runId);
+    }
+
+    private initializeRun(intent: string, pubkey: string): string {
         const runId = uuidv4();
         this.logger.log(`[${runId}] Starting agent run: "${intent}" for ${pubkey}`);
         this.runStream.createRun(runId);
+        return runId;
+    }
 
+    private async executeAgentWithRunId(
+        intent: string,
+        pubkey: string,
+        runId: string,
+    ): Promise<AgentRunResult> {
         const state: AgentState = {
             intent,
             pubkey,

@@ -34,7 +34,7 @@ export class AgentController {
             return { error: 'Both intent and pubkey are required' };
         }
 
-        const result = await this.agentService.executeAgent(intent, pubkey);
+        const result = this.agentService.startAgentRun(intent, pubkey);
         return result;
     }
 

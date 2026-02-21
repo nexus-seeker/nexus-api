@@ -386,4 +386,63 @@ describe('AgentService', () => {
       }),
     );
   });
+
+  it('startAgentRun returns run id immediately and executes in background', async () => {
+    let resolveParse: ((value: unknown) => void) | undefined;
+    const parsePromise = new Promise((resolve) => {
+      resolveParse = resolve;
+    });
+
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn(),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
+
+    (parseIntentNode as jest.Mock).mockReturnValue(parsePromise);
+
+    const initial = service.startAgentRun(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
+
+    expect(initial).toEqual({ runId: 'run-id', steps: [] });
+    expect(runStream.createRun).toHaveBeenCalledWith('run-id');
+    expect(runStream.emitComplete).not.toHaveBeenCalled();
+    expect(policyPrecheck.precheck).not.toHaveBeenCalled();
+
+    resolveParse?.({
+      rejectionReason: 'Rejected during parse',
+      rejectionField: 'intent',
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'rejected',
+          label: 'bad intent',
+        },
+      ],
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(runStream.emitComplete).toHaveBeenCalledWith(
+      'run-id',
+      expect.objectContaining({
+        runId: 'run-id',
+        steps: expect.arrayContaining([
+          expect.objectContaining({ node: 'parse_intent', status: 'rejected' }),
+        ]),
+        rejection: {
+          reason: 'Rejected during parse',
+          policyField: 'intent',
+        },
+      }),
+    );
+  });
 });
