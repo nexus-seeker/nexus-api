@@ -1,6 +1,7 @@
 import { AgentService } from './agent.service';
 import { TxAssemblerService } from './tx-assembler.service';
 import { PolicyPrecheckService } from './policy-precheck.service';
+import { RunStreamService } from './run-stream.service';
 import {
   parseIntentNode,
   buildTransactionNode,
@@ -18,6 +19,12 @@ jest.mock('./graph', () => ({
 }));
 
 describe('AgentService', () => {
+  const createRunStreamMock = () => ({
+    createRun: jest.fn(),
+    emitStep: jest.fn(),
+    emitComplete: jest.fn(),
+  }) as unknown as RunStreamService;
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -34,8 +41,9 @@ describe('AgentService', () => {
           reason: 'Policy precheck passed.',
         }),
       } as unknown as PolicyPrecheckService;
+      const runStream = createRunStreamMock();
 
-      const service = new AgentService(txAssembler, policyPrecheck);
+      const service = new AgentService(txAssembler, policyPrecheck, runStream);
 
       (parseIntentNode as jest.Mock).mockResolvedValue({
         action: 'swap',
@@ -85,8 +93,9 @@ describe('AgentService', () => {
         reason: 'Policy precheck passed.',
       }),
     } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -135,8 +144,9 @@ describe('AgentService', () => {
         reason: 'Policy precheck passed.',
       }),
     } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -196,8 +206,9 @@ describe('AgentService', () => {
         reason: 'Daily spending limit exceeded for this policy window.',
       }),
     } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -248,8 +259,9 @@ describe('AgentService', () => {
     const policyPrecheck = {
       precheck: jest.fn().mockRejectedValue(error),
     } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -277,5 +289,62 @@ describe('AgentService', () => {
         }),
       ]),
     );
+  });
+
+  it('emits stream step and complete events while executing', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: true,
+        reason: 'Policy precheck passed.',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
+
+    const parseStep = {
+      type: 'step',
+      node: 'parse_intent',
+      status: 'success',
+      label: 'parsed',
+    };
+    const buildStep = {
+      type: 'step',
+      node: 'build_transaction',
+      status: 'success',
+      label: 'built',
+    };
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [parseStep],
+    });
+    (buildTransactionNode as jest.Mock).mockResolvedValue({
+      jupiterInstructions: { swapTransaction: 'jupiter-tx' },
+      steps: [buildStep],
+    });
+
+    const result = await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
+
+    expect(runStream.createRun).toHaveBeenCalledWith('run-id');
+    expect(runStream.emitStep).toHaveBeenCalledWith('run-id', parseStep);
+    expect(runStream.emitStep).toHaveBeenCalledWith(
+      'run-id',
+      expect.objectContaining({ node: 'validate_policy', status: 'success' }),
+    );
+    expect(runStream.emitStep).toHaveBeenCalledWith('run-id', buildStep);
+    expect(runStream.emitStep).toHaveBeenCalledWith(
+      'run-id',
+      expect.objectContaining({ node: 'assemble_tx', status: 'success' }),
+    );
+    expect(runStream.emitComplete).toHaveBeenCalledWith('run-id', result);
   });
 });

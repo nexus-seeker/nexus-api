@@ -5,6 +5,7 @@ import type { AgentState, StepEvent, AgentRunResult } from './state';
 import { parseIntentNode, buildTransactionNode } from './graph';
 import { TxAssemblerService } from './tx-assembler.service';
 import { PolicyPrecheckService } from './policy-precheck.service';
+import { RunStreamService } from './run-stream.service';
 
 @Injectable()
 export class AgentService {
@@ -14,11 +15,13 @@ export class AgentService {
     constructor(
         private readonly txAssembler: TxAssemblerService,
         private readonly policyPrecheck: PolicyPrecheckService,
+        private readonly runStream: RunStreamService,
     ) { }
 
     async executeAgent(intent: string, pubkey: string): Promise<AgentRunResult> {
         const runId = uuidv4();
         this.logger.log(`[${runId}] Starting agent run: "${intent}" for ${pubkey}`);
+        this.runStream.createRun(runId);
 
         // ─── Mock Mode ─────────────────────────────────────────────
         if (process.env.MOCK_MODE === 'true') {
@@ -38,7 +41,11 @@ export class AgentService {
         // Node 1: Parse Intent
         const parseResult = await parseIntentNode(state);
         Object.assign(state, parseResult);
-        if (parseResult.steps) allSteps.push(...parseResult.steps);
+        if (parseResult.steps) {
+            for (const step of parseResult.steps) {
+                this.emitStep(runId, allSteps, step);
+            }
+        }
 
         if (state.rejectionReason) {
             return this.finishRun(runId, allSteps, state);
@@ -58,7 +65,7 @@ export class AgentService {
             state.policyValid = false;
             state.rejectionReason = `Policy precheck failed: ${errorMessage}`;
             state.rejectionField = 'policy_fetch';
-            allSteps.push({
+            this.emitStep(runId, allSteps, {
                 type: 'step',
                 node: 'validate_policy',
                 status: 'rejected',
@@ -67,7 +74,7 @@ export class AgentService {
             return this.finishRun(runId, allSteps, state);
         }
 
-        allSteps.push({
+        this.emitStep(runId, allSteps, {
             type: 'step',
             node: 'validate_policy',
             status: precheck.allowed ? 'success' : 'rejected',
@@ -97,7 +104,11 @@ export class AgentService {
         // Node 3: Build Transaction (Jupiter)
         const buildResult = await buildTransactionNode(state);
         Object.assign(state, buildResult);
-        if (buildResult.steps) allSteps.push(...buildResult.steps);
+        if (buildResult.steps) {
+            for (const step of buildResult.steps) {
+                this.emitStep(runId, allSteps, step);
+            }
+        }
 
         if (state.rejectionReason) {
             return this.finishRun(runId, allSteps, state);
@@ -130,7 +141,7 @@ export class AgentService {
 
             state.unsignedTxBase64 = txBase64;
 
-            allSteps.push({
+            this.emitStep(runId, allSteps, {
                 ...assembleStep,
                 status: 'success',
                 label: 'Transaction assembled with policy enforcement ✓',
@@ -139,7 +150,7 @@ export class AgentService {
             this.logger.error(`[${runId}] TxAssembly error: ${err.message}`);
             state.rejectionReason = `Tx assembly failed: ${err.message}`;
             state.rejectionField = 'tx_assembly';
-            allSteps.push({
+            this.emitStep(runId, allSteps, {
                 ...assembleStep,
                 status: 'rejected',
                 label: `Assembly error: ${err.message}`,
@@ -176,6 +187,7 @@ export class AgentService {
         }
 
         this.activeRuns.set(runId, steps);
+        this.runStream.emitComplete(runId, result);
         return result;
     }
 
@@ -209,7 +221,11 @@ export class AgentService {
 
         this.activeRuns.set(runId, steps);
 
-        return {
+        for (const step of steps) {
+            this.runStream.emitStep(runId, step);
+        }
+
+        const result = {
             runId,
             steps,
             unsignedTx: 'MOCK_BASE64_TX_BYTES',
@@ -219,5 +235,13 @@ export class AgentService {
                 priceImpact: '0.02%',
             },
         };
+        this.runStream.emitComplete(runId, result);
+
+        return result;
+    }
+
+    private emitStep(runId: string, allSteps: StepEvent[], step: StepEvent): void {
+        allSteps.push(step);
+        this.runStream.emitStep(runId, step);
     }
 }

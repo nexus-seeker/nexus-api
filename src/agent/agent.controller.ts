@@ -12,13 +12,17 @@ import {
 import { Observable } from 'rxjs';
 import { AgentService } from './agent.service';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
+import { RunStreamService } from './run-stream.service';
 
 @Controller('agent')
 @UseGuards(ApiKeyGuard)
 export class AgentController {
     private readonly logger = new Logger(AgentController.name);
 
-    constructor(private readonly agentService: AgentService) { }
+    constructor(
+        private readonly agentService: AgentService,
+        private readonly runStream: RunStreamService,
+    ) { }
 
     @Post('execute')
     async execute(
@@ -37,46 +41,32 @@ export class AgentController {
     @Sse(':runId/stream')
     stream(@Param('runId') runId: string): Observable<MessageEvent> {
         return new Observable((observer) => {
-            // Heartbeat every 4 seconds
             const heartbeat = setInterval(() => {
                 observer.next({
                     data: JSON.stringify({ type: 'heartbeat' }),
                 } as MessageEvent);
             }, 4000);
 
-            // Check for steps and emit them
-            const checkAndEmit = () => {
-                const steps = this.agentService.getRunSteps(runId);
-                if (steps) {
-                    // Emit all steps
-                    for (const step of steps) {
-                        observer.next({
-                            data: JSON.stringify({ type: 'step', step }),
-                        } as MessageEvent);
-                    }
-
-                    // Emit complete
+            const runSubscription = this.runStream.subscribe(runId).subscribe({
+                next: (event) => {
                     observer.next({
-                        data: JSON.stringify({
-                            type: 'complete',
-                            result: { runId, steps },
-                        }),
+                        data: JSON.stringify(event),
                     } as MessageEvent);
 
+                    if (event.type === 'complete') {
+                        clearInterval(heartbeat);
+                        observer.complete();
+                    }
+                },
+                complete: () => {
                     clearInterval(heartbeat);
                     observer.complete();
-                } else {
-                    // Run not found yet, retry in 500ms
-                    setTimeout(checkAndEmit, 500);
-                }
-            };
+                },
+            });
 
-            // Start checking after a small delay to let the run start
-            setTimeout(checkAndEmit, 100);
-
-            // Cleanup on unsubscribe
             return () => {
                 clearInterval(heartbeat);
+                runSubscription.unsubscribe();
             };
         });
     }

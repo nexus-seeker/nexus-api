@@ -3,10 +3,11 @@ import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
 import { TxAssemblerService } from './tx-assembler.service';
 import { PolicyPrecheckService } from './policy-precheck.service';
+import { RunStreamService } from './run-stream.service';
 
 @Module({
     controllers: [AgentController],
-    providers: [AgentService, TxAssemblerService, PolicyPrecheckService],
-    exports: [AgentService, TxAssemblerService, PolicyPrecheckService],
+    providers: [AgentService, TxAssemblerService, PolicyPrecheckService, RunStreamService],
+    exports: [AgentService, TxAssemblerService, PolicyPrecheckService, RunStreamService],
 })
 export class AgentModule { }
