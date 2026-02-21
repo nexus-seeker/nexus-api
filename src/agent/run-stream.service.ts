@@ -9,6 +9,7 @@ export type RunStreamEvent =
 @Injectable()
 export class RunStreamService {
   private readonly completedRunTtlMs = 60_000;
+  private readonly replayBufferSize = 32;
   private readonly channels = new Map<
     string,
     {
@@ -25,7 +26,7 @@ export class RunStreamService {
     }
 
     this.channels.set(runId, {
-      stream: new ReplaySubject<RunStreamEvent>(),
+      stream: new ReplaySubject<RunStreamEvent>(this.replayBufferSize),
       completed: false,
     });
   }

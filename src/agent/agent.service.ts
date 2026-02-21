@@ -10,7 +10,6 @@ import { RunStreamService } from './run-stream.service';
 @Injectable()
 export class AgentService {
     private readonly logger = new Logger(AgentService.name);
-    private readonly activeRuns = new Map<string, StepEvent[]>();
 
     constructor(
         private readonly txAssembler: TxAssemblerService,
@@ -175,10 +174,6 @@ export class AgentService {
         }
     }
 
-    getRunSteps(runId: string): StepEvent[] | undefined {
-        return this.activeRuns.get(runId);
-    }
-
     private finishRun(
         runId: string,
         steps: StepEvent[],
@@ -201,7 +196,6 @@ export class AgentService {
             result.simulation = state.simulationResult;
         }
 
-        this.activeRuns.set(runId, steps);
         this.runStream.emitComplete(runId, result);
         return result;
     }
@@ -233,8 +227,6 @@ export class AgentService {
                 status: 'success',
             },
         ];
-
-        this.activeRuns.set(runId, steps);
 
         for (const step of steps) {
             this.runStream.emitStep(runId, step);

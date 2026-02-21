@@ -102,6 +102,52 @@ describe('RunStreamService', () => {
       { type: 'complete', result },
     ]);
   });
+
+  it('bounds replay buffer for late subscribers', () => {
+    const service = new RunStreamService();
+    const runId = 'run-bounded';
+    const totalSteps = 80;
+
+    service.createRun(runId);
+
+    for (let i = 0; i < totalSteps; i += 1) {
+      service.emitStep(runId, {
+        type: 'step',
+        node: 'parse_intent',
+        status: 'success',
+        label: `step-${i}`,
+      });
+    }
+
+    const result: AgentRunResult = { runId, steps: [] };
+    service.emitComplete(runId, result);
+
+    const received: Array<{ type: 'step'; step: StepEvent } | { type: 'complete'; result: AgentRunResult }> = [];
+    service.subscribe(runId)?.subscribe((event) => {
+      received.push(event);
+    });
+
+    expect(received).toHaveLength(32);
+    expect(received[0]).toEqual({
+      type: 'step',
+      step: {
+        type: 'step',
+        node: 'parse_intent',
+        status: 'success',
+        label: 'step-49',
+      },
+    });
+    expect(received[30]).toEqual({
+      type: 'step',
+      step: {
+        type: 'step',
+        node: 'parse_intent',
+        status: 'success',
+        label: 'step-79',
+      },
+    });
+    expect(received[31]).toEqual({ type: 'complete', result });
+  });
 });
 
 describe('AgentController stream', () => {
