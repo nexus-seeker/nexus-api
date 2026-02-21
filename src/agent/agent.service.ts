@@ -6,7 +6,6 @@ import {
     parseIntentNode,
     validatePolicyNode,
     buildTransactionNode,
-    assembleTxNode,
 } from './graph';
 import { TxAssemblerService } from './tx-assembler.service';
 
@@ -90,10 +89,13 @@ export class AgentService {
             });
         } catch (err: any) {
             this.logger.error(`[${runId}] TxAssembly error: ${err.message}`);
-            // Fallback: use Jupiter tx directly (without check_and_record prepend)
-            const fallbackResult = await assembleTxNode(state);
-            Object.assign(state, fallbackResult);
-            if (fallbackResult.steps) allSteps.push(...fallbackResult.steps);
+            state.rejectionReason = `Tx assembly failed: ${err.message}`;
+            state.rejectionField = 'tx_assembly';
+            allSteps.push({
+                ...assembleStep,
+                status: 'rejected',
+                label: `Assembly error: ${err.message}`,
+            });
         }
 
         return this.finishRun(runId, allSteps, state);
