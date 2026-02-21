@@ -1,43 +1,56 @@
-import { BaseMessage } from "@langchain/core/messages";
-import { Annotation } from "@langchain/langgraph";
+// AgentState — the linear 4-node graph state
+export interface StepEvent {
+    type: 'step' | 'heartbeat' | 'complete';
+    node?: string;
+    label?: string;
+    status?: 'running' | 'success' | 'rejected';
+    payload?: any;
+    result?: AgentRunResult;
+}
 
-// Define the state schema for our LangGraph agent
-export const AgentState = Annotation.Root({
-    // The conversation history and current intent
-    messages: Annotation<BaseMessage[]>({
-        reducer: (x, y) => x.concat(y),
-        default: () => [],
-    }),
+export interface AgentRunResult {
+    runId: string;
+    steps: StepEvent[];
+    unsignedTx?: string;
+    rejection?: {
+        reason: string;
+        policyField: string;
+    };
+    simulation?: {
+        fee: number;
+        outAmount: number;
+        priceImpact: string;
+    };
+}
 
-    // The user's wallet address from the mobile app
-    user_public_key: Annotation<string>({
-        reducer: (x, y) => y ?? x,
-        default: () => "",
-    }),
+export interface AgentState {
+    // Input
+    intent: string;
+    pubkey: string;
+    runId: string;
 
-    // If the agent decides to build a transaction, it stores it here
-    proposed_transaction: Annotation<string | null>({
-        reducer: (x, y) => y ?? x,
-        default: () => null,
-    }),
+    // Parsed
+    action?: 'swap' | 'transfer';
+    tokenIn?: string;
+    tokenOut?: string;
+    amountLamports?: number;
+    protocol?: string;
 
-    // --- Plan-and-Execute extensions ---
+    // Policy check
+    policyValid?: boolean;
+    rejectionReason?: string;
+    rejectionField?: string;
 
-    // The generated plan of steps
-    plan: Annotation<string[]>({
-        reducer: (x, y) => y, // Overwrite
-        default: () => [],
-    }),
+    // Transaction
+    jupiterQuote?: any;
+    jupiterInstructions?: any;
+    unsignedTxBase64?: string;
+    simulationResult?: {
+        fee: number;
+        outAmount: number;
+        priceImpact: string;
+    };
 
-    // History of executed steps: [step_description, result]
-    past_steps: Annotation<[string, string][]>({
-        reducer: (x, y) => x.concat(y), // Append
-        default: () => [],
-    }),
-
-    // The final response detailing the executed plan
-    response: Annotation<string | null>({
-        reducer: (x, y) => y ?? x,
-        default: () => null,
-    })
-});
+    // Streaming
+    steps: StepEvent[];
+}
