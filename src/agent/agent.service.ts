@@ -71,16 +71,23 @@ export class AgentService {
         };
 
         try {
-            if (state.jupiterInstructions) {
-                const txBase64 = await this.txAssembler.assembleTransaction(
-                    new PublicKey(pubkey),
-                    state.amountLamports || 0,
-                    state.protocol || 'jupiter',
-                    intent,
-                    state.jupiterInstructions,
-                );
-                state.unsignedTxBase64 = txBase64;
+            if (!state.jupiterInstructions) {
+                throw new Error('Missing Jupiter instructions');
             }
+
+            const txBase64 = await this.txAssembler.assembleTransaction(
+                new PublicKey(pubkey),
+                state.amountLamports || 0,
+                state.protocol || 'jupiter',
+                intent,
+                state.jupiterInstructions,
+            );
+
+            if (!txBase64) {
+                throw new Error('Assembler returned empty transaction');
+            }
+
+            state.unsignedTxBase64 = txBase64;
 
             allSteps.push({
                 ...assembleStep,
