@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import * as crypto from 'crypto';
 import { PublicKey } from '@solana/web3.js';
 import type { AgentState, StepEvent, AgentRunResult } from './state';
 import { parseIntentNode, buildTransactionNode } from './graph';
@@ -42,7 +42,7 @@ export class AgentService {
     }
 
     private initializeRun(intent: string, pubkey: string): string {
-        const runId = uuidv4();
+        const runId = crypto.randomUUID();
         this.logger.log(`[${runId}] Starting agent run: "${intent}" for ${pubkey}`);
         this.runStream.createRun(runId);
         return runId;
