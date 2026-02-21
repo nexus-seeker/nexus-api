@@ -2,19 +2,19 @@ import { Injectable, Logger } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { PublicKey } from '@solana/web3.js';
 import type { AgentState, StepEvent, AgentRunResult } from './state';
-import {
-    parseIntentNode,
-    validatePolicyNode,
-    buildTransactionNode,
-} from './graph';
+import { parseIntentNode, buildTransactionNode } from './graph';
 import { TxAssemblerService } from './tx-assembler.service';
+import { PolicyPrecheckService } from './policy-precheck.service';
 
 @Injectable()
 export class AgentService {
     private readonly logger = new Logger(AgentService.name);
     private readonly activeRuns = new Map<string, StepEvent[]>();
 
-    constructor(private readonly txAssembler: TxAssemblerService) { }
+    constructor(
+        private readonly txAssembler: TxAssemblerService,
+        private readonly policyPrecheck: PolicyPrecheckService,
+    ) { }
 
     async executeAgent(intent: string, pubkey: string): Promise<AgentRunResult> {
         const runId = uuidv4();
@@ -44,14 +44,39 @@ export class AgentService {
             return this.finishRun(runId, allSteps, state);
         }
 
-        // Node 2: Validate Policy
-        const policyResult = await validatePolicyNode(state);
-        Object.assign(state, policyResult);
-        if (policyResult.steps) allSteps.push(...policyResult.steps);
+        // Node 2: Validate Policy (deterministic precheck)
+        const precheck = await this.policyPrecheck.precheck({
+            pubkey,
+            amountLamports: state.amountLamports || 0,
+            protocol: state.protocol || 'jupiter',
+        });
 
-        if (state.policyValid === false || state.rejectionReason) {
+        allSteps.push({
+            type: 'step',
+            node: 'validate_policy',
+            status: precheck.allowed ? 'success' : 'rejected',
+            label: precheck.allowed
+                ? `Policy check passed: ${precheck.reason}`
+                : `Policy check failed: ${precheck.reason}`,
+            payload: {
+                amountLamports: precheck.amountLamports,
+                protocol: precheck.protocol,
+                effectiveSpendLamports: precheck.effectiveSpendLamports,
+                projectedSpendLamports: precheck.projectedSpendLamports,
+                dailyMaxLamports: precheck.dailyMaxLamports,
+                allowedProtocols: precheck.allowedProtocols,
+                lastResetTs: precheck.lastResetTs,
+            },
+        });
+
+        if (!precheck.allowed) {
+            state.policyValid = false;
+            state.rejectionReason = precheck.reason;
+            state.rejectionField = precheck.rejectionField || 'policy';
             return this.finishRun(runId, allSteps, state);
         }
+
+        state.policyValid = true;
 
         // Node 3: Build Transaction (Jupiter)
         const buildResult = await buildTransactionNode(state);

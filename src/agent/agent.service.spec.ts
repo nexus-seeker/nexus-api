@@ -1,8 +1,8 @@
 import { AgentService } from './agent.service';
 import { TxAssemblerService } from './tx-assembler.service';
+import { PolicyPrecheckService } from './policy-precheck.service';
 import {
   parseIntentNode,
-  validatePolicyNode,
   buildTransactionNode,
   assembleTxNode,
 } from './graph';
@@ -13,7 +13,6 @@ jest.mock('uuid', () => ({
 
 jest.mock('./graph', () => ({
   parseIntentNode: jest.fn(),
-  validatePolicyNode: jest.fn(),
   buildTransactionNode: jest.fn(),
   assembleTxNode: jest.fn(),
 }));
@@ -29,8 +28,14 @@ describe('AgentService', () => {
       const txAssembler = {
         assembleTransaction: jest.fn().mockResolvedValue(assembledTx),
       } as unknown as TxAssemblerService;
+      const policyPrecheck = {
+        precheck: jest.fn().mockResolvedValue({
+          allowed: true,
+          reason: 'Policy precheck passed.',
+        }),
+      } as unknown as PolicyPrecheckService;
 
-      const service = new AgentService(txAssembler);
+      const service = new AgentService(txAssembler, policyPrecheck);
 
       (parseIntentNode as jest.Mock).mockResolvedValue({
         action: 'swap',
@@ -38,12 +43,6 @@ describe('AgentService', () => {
         protocol: 'jupiter',
         steps: [
           { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
-        ],
-      });
-      (validatePolicyNode as jest.Mock).mockResolvedValue({
-        policyValid: true,
-        steps: [
-          { type: 'step', node: 'validate_policy', status: 'success', label: 'ok' },
         ],
       });
       (buildTransactionNode as jest.Mock).mockResolvedValue({
@@ -80,8 +79,14 @@ describe('AgentService', () => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
     } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: true,
+        reason: 'Policy precheck passed.',
+      }),
+    } as unknown as PolicyPrecheckService;
 
-    const service = new AgentService(txAssembler);
+    const service = new AgentService(txAssembler, policyPrecheck);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -90,10 +95,6 @@ describe('AgentService', () => {
       steps: [
         { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
       ],
-    });
-    (validatePolicyNode as jest.Mock).mockResolvedValue({
-      policyValid: true,
-      steps: [{ type: 'step', node: 'validate_policy', status: 'success', label: 'ok' }],
     });
     (buildTransactionNode as jest.Mock).mockResolvedValue({
       steps: [
@@ -128,8 +129,14 @@ describe('AgentService', () => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockRejectedValue(new Error('assembler down')),
     } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: true,
+        reason: 'Policy precheck passed.',
+      }),
+    } as unknown as PolicyPrecheckService;
 
-    const service = new AgentService(txAssembler);
+    const service = new AgentService(txAssembler, policyPrecheck);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -137,12 +144,6 @@ describe('AgentService', () => {
       protocol: 'jupiter',
       steps: [
         { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
-      ],
-    });
-    (validatePolicyNode as jest.Mock).mockResolvedValue({
-      policyValid: true,
-      steps: [
-        { type: 'step', node: 'validate_policy', status: 'success', label: 'ok' },
       ],
     });
     (buildTransactionNode as jest.Mock).mockResolvedValue({
@@ -179,6 +180,51 @@ describe('AgentService', () => {
         expect.objectContaining({
           node: 'assemble_tx',
           status: 'rejected',
+        }),
+      ]),
+    );
+  });
+
+  it('rejects before tx build when policy precheck fails', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: false,
+        rejectionField: 'daily_max_lamports',
+        reason: 'Daily spending limit exceeded for this policy window.',
+      }),
+    } as unknown as PolicyPrecheckService;
+
+    const service = new AgentService(txAssembler, policyPrecheck);
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [
+        { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
+      ],
+    });
+
+    const result = await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
+
+    expect(buildTransactionNode).not.toHaveBeenCalled();
+    expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
+    expect(result.rejection).toEqual({
+      reason: 'Daily spending limit exceeded for this policy window.',
+      policyField: 'daily_max_lamports',
+    });
+    expect(result.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          node: 'validate_policy',
+          status: 'rejected',
+          label: expect.stringContaining('Daily spending limit exceeded'),
         }),
       ]),
     );
