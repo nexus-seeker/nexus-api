@@ -45,11 +45,27 @@ export class AgentService {
         }
 
         // Node 2: Validate Policy (deterministic precheck)
-        const precheck = await this.policyPrecheck.precheck({
-            pubkey,
-            amountLamports: state.amountLamports || 0,
-            protocol: state.protocol || 'jupiter',
-        });
+        let precheck;
+        try {
+            precheck = await this.policyPrecheck.precheck({
+                pubkey,
+                amountLamports: state.amountLamports || 0,
+                protocol: state.protocol || 'jupiter',
+            });
+        } catch (err: any) {
+            const errorMessage = err?.message || 'Unknown precheck error';
+            this.logger.error(`[${runId}] Policy precheck error: ${errorMessage}`);
+            state.policyValid = false;
+            state.rejectionReason = `Policy precheck failed: ${errorMessage}`;
+            state.rejectionField = 'policy_fetch';
+            allSteps.push({
+                type: 'step',
+                node: 'validate_policy',
+                status: 'rejected',
+                label: `Policy precheck error: ${errorMessage}`,
+            });
+            return this.finishRun(runId, allSteps, state);
+        }
 
         allSteps.push({
             type: 'step',

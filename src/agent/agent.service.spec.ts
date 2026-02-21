@@ -229,4 +229,53 @@ describe('AgentService', () => {
       ]),
     );
   });
+
+  it.each([
+    {
+      name: 'invalid pubkey input',
+      pubkey: 'not-a-valid-solana-pubkey',
+      error: new Error('Invalid public key input'),
+    },
+    {
+      name: 'policy fetch service throws',
+      pubkey: '11111111111111111111111111111111',
+      error: new Error('policy vault fetch failed'),
+    },
+  ])('returns structured rejection when precheck fails unexpectedly: $name', async ({ pubkey, error }) => {
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockRejectedValue(error),
+    } as unknown as PolicyPrecheckService;
+
+    const service = new AgentService(txAssembler, policyPrecheck);
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [
+        { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
+      ],
+    });
+
+    const result = await service.executeAgent('swap 0.1 SOL to USDC', pubkey);
+
+    expect(buildTransactionNode).not.toHaveBeenCalled();
+    expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
+    expect(result.rejection).toEqual({
+      reason: `Policy precheck failed: ${error.message}`,
+      policyField: 'policy_fetch',
+    });
+    expect(result.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          node: 'validate_policy',
+          status: 'rejected',
+          label: expect.stringContaining(error.message),
+        }),
+      ]),
+    );
+  });
 });
