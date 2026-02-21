@@ -20,4 +20,24 @@ export const AgentState = Annotation.Root({
         reducer: (x, y) => y ?? x,
         default: () => null,
     }),
+
+    // --- Plan-and-Execute extensions ---
+
+    // The generated plan of steps
+    plan: Annotation<string[]>({
+        reducer: (x, y) => y, // Overwrite
+        default: () => [],
+    }),
+
+    // History of executed steps: [step_description, result]
+    past_steps: Annotation<[string, string][]>({
+        reducer: (x, y) => x.concat(y), // Append
+        default: () => [],
+    }),
+
+    // The final response detailing the executed plan
+    response: Annotation<string | null>({
+        reducer: (x, y) => y ?? x,
+        default: () => null,
+    })
 });
