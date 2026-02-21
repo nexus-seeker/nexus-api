@@ -1,15 +1,7 @@
-import { ChatOpenAI } from '@langchain/openai';
 import type { AgentState, StepEvent } from './state';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
-
-// ─── LLM ───────────────────────────────────────────────────────────
-
-const llm = new ChatOpenAI({
-    modelName: process.env.LLM_MODEL || 'gpt-4o-mini',
-    temperature: 0,
-});
 
 // ─── Token Mint Map ────────────────────────────────────────────────
 
@@ -30,6 +22,13 @@ export async function parseIntentNode(state: AgentState): Promise<Partial<AgentS
     };
 
     try {
+        // Lazy import — only loads LangChain when actually needed (not in MOCK_MODE)
+        const { ChatOpenAI } = await import('@langchain/openai');
+        const llm = new ChatOpenAI({
+            modelName: process.env.LLM_MODEL || 'gpt-4o-mini',
+            temperature: 0,
+        });
+
         const response = await llm.invoke([
             {
                 role: 'system',
