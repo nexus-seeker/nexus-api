@@ -23,12 +23,6 @@ export class AgentService {
         this.logger.log(`[${runId}] Starting agent run: "${intent}" for ${pubkey}`);
         this.runStream.createRun(runId);
 
-        // ─── Mock Mode ─────────────────────────────────────────────
-        if (process.env.MOCK_MODE === 'true') {
-            return this.mockResponse(runId);
-        }
-
-        // ─── Real Execution ────────────────────────────────────────
         const state: AgentState = {
             intent,
             pubkey,
@@ -38,126 +32,147 @@ export class AgentService {
 
         const allSteps: StepEvent[] = [];
 
-        // Node 1: Parse Intent
-        const parseResult = await parseIntentNode(state);
-        Object.assign(state, parseResult);
-        if (parseResult.steps) {
-            for (const step of parseResult.steps) {
-                this.emitStep(runId, allSteps, step);
-            }
-        }
-
-        if (state.rejectionReason) {
-            return this.finishRun(runId, allSteps, state);
-        }
-
-        // Node 2: Validate Policy (deterministic precheck)
-        let precheck;
         try {
-            precheck = await this.policyPrecheck.precheck({
-                pubkey,
-                amountLamports: state.amountLamports || 0,
-                protocol: state.protocol || 'jupiter',
-            });
-        } catch (err: any) {
-            const errorMessage = err?.message || 'Unknown precheck error';
-            this.logger.error(`[${runId}] Policy precheck error: ${errorMessage}`);
-            state.policyValid = false;
-            state.rejectionReason = `Policy precheck failed: ${errorMessage}`;
-            state.rejectionField = 'policy_fetch';
+            // ─── Mock Mode ─────────────────────────────────────────────
+            if (process.env.MOCK_MODE === 'true') {
+                return this.mockResponse(runId);
+            }
+
+            // ─── Real Execution ────────────────────────────────────────
+
+            // Node 1: Parse Intent
+            const parseResult = await parseIntentNode(state);
+            Object.assign(state, parseResult);
+            if (parseResult.steps) {
+                for (const step of parseResult.steps) {
+                    this.emitStep(runId, allSteps, step);
+                }
+            }
+
+            if (state.rejectionReason) {
+                return this.finishRun(runId, allSteps, state);
+            }
+
+            // Node 2: Validate Policy (deterministic precheck)
+            let precheck;
+            try {
+                precheck = await this.policyPrecheck.precheck({
+                    pubkey,
+                    amountLamports: state.amountLamports || 0,
+                    protocol: state.protocol || 'jupiter',
+                });
+            } catch (err: any) {
+                const errorMessage = err?.message || 'Unknown precheck error';
+                this.logger.error(`[${runId}] Policy precheck error: ${errorMessage}`);
+                state.policyValid = false;
+                state.rejectionReason = `Policy precheck failed: ${errorMessage}`;
+                state.rejectionField = 'policy_fetch';
+                this.emitStep(runId, allSteps, {
+                    type: 'step',
+                    node: 'validate_policy',
+                    status: 'rejected',
+                    label: `Policy precheck error: ${errorMessage}`,
+                });
+                return this.finishRun(runId, allSteps, state);
+            }
+
             this.emitStep(runId, allSteps, {
                 type: 'step',
                 node: 'validate_policy',
-                status: 'rejected',
-                label: `Policy precheck error: ${errorMessage}`,
+                status: precheck.allowed ? 'success' : 'rejected',
+                label: precheck.allowed
+                    ? `Policy check passed: ${precheck.reason}`
+                    : `Policy check failed: ${precheck.reason}`,
+                payload: {
+                    amountLamports: precheck.amountLamports,
+                    protocol: precheck.protocol,
+                    effectiveSpendLamports: precheck.effectiveSpendLamports,
+                    projectedSpendLamports: precheck.projectedSpendLamports,
+                    dailyMaxLamports: precheck.dailyMaxLamports,
+                    allowedProtocols: precheck.allowedProtocols,
+                    lastResetTs: precheck.lastResetTs,
+                },
             });
-            return this.finishRun(runId, allSteps, state);
-        }
 
-        this.emitStep(runId, allSteps, {
-            type: 'step',
-            node: 'validate_policy',
-            status: precheck.allowed ? 'success' : 'rejected',
-            label: precheck.allowed
-                ? `Policy check passed: ${precheck.reason}`
-                : `Policy check failed: ${precheck.reason}`,
-            payload: {
-                amountLamports: precheck.amountLamports,
-                protocol: precheck.protocol,
-                effectiveSpendLamports: precheck.effectiveSpendLamports,
-                projectedSpendLamports: precheck.projectedSpendLamports,
-                dailyMaxLamports: precheck.dailyMaxLamports,
-                allowedProtocols: precheck.allowedProtocols,
-                lastResetTs: precheck.lastResetTs,
-            },
-        });
-
-        if (!precheck.allowed) {
-            state.policyValid = false;
-            state.rejectionReason = precheck.reason;
-            state.rejectionField = precheck.rejectionField || 'policy';
-            return this.finishRun(runId, allSteps, state);
-        }
-
-        state.policyValid = true;
-
-        // Node 3: Build Transaction (Jupiter)
-        const buildResult = await buildTransactionNode(state);
-        Object.assign(state, buildResult);
-        if (buildResult.steps) {
-            for (const step of buildResult.steps) {
-                this.emitStep(runId, allSteps, step);
-            }
-        }
-
-        if (state.rejectionReason) {
-            return this.finishRun(runId, allSteps, state);
-        }
-
-        // Node 4: Assemble Transaction (prepend check_and_record_ix)
-        const assembleStep: StepEvent = {
-            type: 'step',
-            node: 'assemble_tx',
-            label: 'Assembling transaction...',
-            status: 'running',
-        };
-
-        try {
-            if (!state.jupiterInstructions) {
-                throw new Error('Missing Jupiter instructions');
+            if (!precheck.allowed) {
+                state.policyValid = false;
+                state.rejectionReason = precheck.reason;
+                state.rejectionField = precheck.rejectionField || 'policy';
+                return this.finishRun(runId, allSteps, state);
             }
 
-            const txBase64 = await this.txAssembler.assembleTransaction(
-                new PublicKey(pubkey),
-                state.amountLamports || 0,
-                state.protocol || 'jupiter',
-                intent,
-                state.jupiterInstructions,
-            );
+            state.policyValid = true;
 
-            if (!txBase64) {
-                throw new Error('Assembler returned empty transaction');
+            // Node 3: Build Transaction (Jupiter)
+            const buildResult = await buildTransactionNode(state);
+            Object.assign(state, buildResult);
+            if (buildResult.steps) {
+                for (const step of buildResult.steps) {
+                    this.emitStep(runId, allSteps, step);
+                }
             }
 
-            state.unsignedTxBase64 = txBase64;
+            if (state.rejectionReason) {
+                return this.finishRun(runId, allSteps, state);
+            }
 
-            this.emitStep(runId, allSteps, {
-                ...assembleStep,
-                status: 'success',
-                label: 'Transaction assembled with policy enforcement ✓',
-            });
+            // Node 4: Assemble Transaction (prepend check_and_record_ix)
+            const assembleStep: StepEvent = {
+                type: 'step',
+                node: 'assemble_tx',
+                label: 'Assembling transaction...',
+                status: 'running',
+            };
+
+            try {
+                if (!state.jupiterInstructions) {
+                    throw new Error('Missing Jupiter instructions');
+                }
+
+                const txBase64 = await this.txAssembler.assembleTransaction(
+                    new PublicKey(pubkey),
+                    state.amountLamports || 0,
+                    state.protocol || 'jupiter',
+                    intent,
+                    state.jupiterInstructions,
+                );
+
+                if (!txBase64) {
+                    throw new Error('Assembler returned empty transaction');
+                }
+
+                state.unsignedTxBase64 = txBase64;
+
+                this.emitStep(runId, allSteps, {
+                    ...assembleStep,
+                    status: 'success',
+                    label: 'Transaction assembled with policy enforcement ✓',
+                });
+            } catch (err: any) {
+                this.logger.error(`[${runId}] TxAssembly error: ${err.message}`);
+                state.rejectionReason = `Tx assembly failed: ${err.message}`;
+                state.rejectionField = 'tx_assembly';
+                this.emitStep(runId, allSteps, {
+                    ...assembleStep,
+                    status: 'rejected',
+                    label: `Assembly error: ${err.message}`,
+                });
+            }
+
+            return this.finishRun(runId, allSteps, state);
         } catch (err: any) {
-            this.logger.error(`[${runId}] TxAssembly error: ${err.message}`);
-            state.rejectionReason = `Tx assembly failed: ${err.message}`;
-            state.rejectionField = 'tx_assembly';
+            const errorMessage = err?.message || 'Unknown execution error';
+            this.logger.error(`[${runId}] Agent execution error: ${errorMessage}`);
+            state.rejectionReason = `Agent execution failed: ${errorMessage}`;
+            state.rejectionField = 'agent_execution';
             this.emitStep(runId, allSteps, {
-                ...assembleStep,
+                type: 'step',
+                node: 'agent_execution',
                 status: 'rejected',
-                label: `Assembly error: ${err.message}`,
+                label: `Execution error: ${errorMessage}`,
             });
+            return this.finishRun(runId, allSteps, state);
         }
-
-        return this.finishRun(runId, allSteps, state);
     }
 
     getRunSteps(runId: string): StepEvent[] | undefined {

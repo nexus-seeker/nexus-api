@@ -21,7 +21,9 @@ describe('RunStreamService', () => {
     const result: AgentRunResult = { runId, steps: [step] };
     const received: Array<{ type: 'step'; step: StepEvent } | { type: 'complete'; result: AgentRunResult }> = [];
 
-    const sub = service.subscribe(runId).subscribe((event) => {
+    service.createRun(runId);
+
+    const sub = service.subscribe(runId)!.subscribe((event) => {
       received.push(event);
     });
 
@@ -46,10 +48,13 @@ describe('RunStreamService', () => {
     const receivedA: Array<{ type: string }> = [];
     const receivedB: Array<{ type: string }> = [];
 
-    const subA = service.subscribe(runA).subscribe((event) => {
+    service.createRun(runA);
+    service.createRun(runB);
+
+    const subA = service.subscribe(runA)!.subscribe((event) => {
       receivedA.push(event);
     });
-    const subB = service.subscribe(runB).subscribe((event) => {
+    const subB = service.subscribe(runB)!.subscribe((event) => {
       receivedB.push(event);
     });
 
@@ -61,6 +66,41 @@ describe('RunStreamService', () => {
 
     subA.unsubscribe();
     subB.unsubscribe();
+  });
+
+  it('replays terminal events for late subscribers after completion', () => {
+    const service = new RunStreamService();
+    const runId = 'run-late';
+    const stepA: StepEvent = {
+      type: 'step',
+      node: 'parse_intent',
+      status: 'success',
+      label: 'parsed',
+    };
+    const stepB: StepEvent = {
+      type: 'step',
+      node: 'validate_policy',
+      status: 'success',
+      label: 'checked',
+    };
+    const result: AgentRunResult = { runId, steps: [stepA, stepB] };
+
+    service.createRun(runId);
+    service.emitStep(runId, stepA);
+    service.emitStep(runId, stepB);
+    service.emitComplete(runId, result);
+
+    const received: Array<{ type: 'step'; step: StepEvent } | { type: 'complete'; result: AgentRunResult }> = [];
+
+    service.subscribe(runId)?.subscribe((event) => {
+      received.push(event);
+    });
+
+    expect(received).toEqual([
+      { type: 'step', step: stepA },
+      { type: 'step', step: stepB },
+      { type: 'complete', result },
+    ]);
   });
 });
 
@@ -82,6 +122,8 @@ describe('AgentController stream', () => {
     const result: AgentRunResult = { runId, steps: [step] };
     const payloads: Array<Record<string, unknown>> = [];
     const onComplete = jest.fn();
+
+    runStream.createRun(runId);
 
     const sub = controller.stream(runId).subscribe({
       next: (event: MessageEvent) => {
@@ -113,6 +155,8 @@ describe('AgentController stream', () => {
     const controller = new AgentController(agentService, runStream);
     const payloads: Array<Record<string, unknown>> = [];
 
+    runStream.createRun('run-3');
+
     const sub = controller.stream('run-3').subscribe({
       next: (event: MessageEvent) => {
         payloads.push(JSON.parse(event.data as string));
@@ -126,5 +170,38 @@ describe('AgentController stream', () => {
     jest.advanceTimersByTime(8000);
 
     expect(payloads).toEqual([{ type: 'heartbeat' }]);
+  });
+
+  it('closes unknown run streams immediately with deterministic complete payload', () => {
+    const runStream = new RunStreamService();
+    const agentService = {} as AgentService;
+    const controller = new AgentController(agentService, runStream);
+    const payloads: Array<Record<string, unknown>> = [];
+    const onComplete = jest.fn();
+
+    controller.stream('unknown-run').subscribe({
+      next: (event: MessageEvent) => {
+        payloads.push(JSON.parse(event.data as string));
+      },
+      complete: onComplete,
+    });
+
+    expect(payloads).toEqual([
+      {
+        type: 'complete',
+        result: {
+          runId: 'unknown-run',
+          steps: [],
+          rejection: {
+            reason: 'Run not found or expired',
+            policyField: 'run_not_found',
+          },
+        },
+      },
+    ]);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(8000);
+    expect(payloads).toHaveLength(1);
   });
 });

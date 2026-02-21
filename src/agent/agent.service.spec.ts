@@ -347,4 +347,43 @@ describe('AgentService', () => {
     );
     expect(runStream.emitComplete).toHaveBeenCalledWith('run-id', result);
   });
+
+  it('finalizes stream with rejection when a graph node throws unexpectedly', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: true,
+        reason: 'Policy precheck passed.',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
+
+    (parseIntentNode as jest.Mock).mockRejectedValue(new Error('parse exploded'));
+
+    await expect(
+      service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111'),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        runId: 'run-id',
+        rejection: {
+          reason: 'Agent execution failed: parse exploded',
+          policyField: 'agent_execution',
+        },
+      }),
+    );
+
+    expect(runStream.emitComplete).toHaveBeenCalledWith(
+      'run-id',
+      expect.objectContaining({
+        rejection: {
+          reason: 'Agent execution failed: parse exploded',
+          policyField: 'agent_execution',
+        },
+      }),
+    );
+  });
 });

@@ -41,13 +41,32 @@ export class AgentController {
     @Sse(':runId/stream')
     stream(@Param('runId') runId: string): Observable<MessageEvent> {
         return new Observable((observer) => {
+            const runStream$ = this.runStream.subscribe(runId);
+            if (!runStream$) {
+                observer.next({
+                    data: JSON.stringify({
+                        type: 'complete',
+                        result: {
+                            runId,
+                            steps: [],
+                            rejection: {
+                                reason: 'Run not found or expired',
+                                policyField: 'run_not_found',
+                            },
+                        },
+                    }),
+                } as MessageEvent);
+                observer.complete();
+                return;
+            }
+
             const heartbeat = setInterval(() => {
                 observer.next({
                     data: JSON.stringify({ type: 'heartbeat' }),
                 } as MessageEvent);
             }, 4000);
 
-            const runSubscription = this.runStream.subscribe(runId).subscribe({
+            const runSubscription = runStream$.subscribe({
                 next: (event) => {
                     observer.next({
                         data: JSON.stringify(event),
