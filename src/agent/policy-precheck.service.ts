@@ -35,8 +35,9 @@ export class PolicyPrecheckService {
 
     if (!vault) {
       return {
-        allowed: true,
-        reason: 'No policy vault found. Allowing first transaction.',
+        allowed: false,
+        rejectionField: 'policy_missing',
+        reason: 'Policy not initialized. Initialize policy vault first.',
         amountLamports,
         protocol,
         effectiveSpendLamports: 0,

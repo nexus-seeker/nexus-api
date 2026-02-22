@@ -6,7 +6,7 @@ describe('PolicyPrecheckService', () => {
     jest.clearAllMocks();
   });
 
-  it('allows when policy vault is missing for first-time users', async () => {
+  it('rejects when policy vault is missing', async () => {
     const solanaService = {
       fetchPolicyVault: jest.fn().mockResolvedValue(null),
     } as unknown as SolanaService;
@@ -19,8 +19,9 @@ describe('PolicyPrecheckService', () => {
       nowTs: 1_700_000_000,
     });
 
-    expect(result.allowed).toBe(true);
-    expect(result.reason).toBe('No policy vault found. Allowing first transaction.');
+    expect(result.allowed).toBe(false);
+    expect(result.rejectionField).toBe('policy_missing');
+    expect(result.reason).toBe('Policy not initialized. Initialize policy vault first.');
   });
 
   it('resets effective spend when daily window has elapsed', async () => {

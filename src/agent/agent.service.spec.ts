@@ -241,6 +241,50 @@ describe('AgentService', () => {
     );
   });
 
+  it('rejects before tx build when policy vault is missing', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: false,
+        rejectionField: 'policy_missing',
+        reason: 'Policy not initialized. Initialize policy vault first.',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+    });
+
+    const result = await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
+
+    expect(buildTransactionNode).not.toHaveBeenCalled();
+    expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
+    expect(result.rejection).toEqual({
+      reason: 'Policy not initialized. Initialize policy vault first.',
+      policyField: 'policy_missing',
+    });
+    expect(result.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          node: 'validate_policy',
+          status: 'rejected',
+          label: expect.stringContaining('Policy not initialized'),
+        }),
+      ]),
+    );
+  });
+
   it.each([
     {
       name: 'invalid pubkey input',
