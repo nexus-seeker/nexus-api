@@ -6,7 +6,7 @@ describe('PolicyPrecheckService', () => {
     jest.clearAllMocks();
   });
 
-  it('allows when policy vault is missing', async () => {
+  it('rejects with not_onboarded when policy vault is missing', async () => {
     const solanaService = {
       fetchPolicyVault: jest.fn().mockResolvedValue(null),
     } as unknown as SolanaService;
@@ -19,9 +19,9 @@ describe('PolicyPrecheckService', () => {
       nowTs: 1_700_000_000,
     });
 
-    expect(result.allowed).toBe(true);
-    expect(result.rejectionField).toBeUndefined();
-    expect(result.reason).toBe('No policy found — proceeding without limits');
+    expect(result.allowed).toBe(false);
+    expect(result.rejectionField).toBe('not_onboarded');
+    expect(result.reason).toContain('POST /policy/onboard');
   });
 
   it('rejects deterministically when amountLamports is invalid', async () => {

@@ -41,7 +41,7 @@ export interface PolicyPrecheckResult {
 
 @Injectable()
 export class PolicyPrecheckService {
-  constructor(private readonly solanaService: SolanaService) {}
+  constructor(private readonly solanaService: SolanaService) { }
 
   async precheck(input: PolicyPrecheckInput): Promise<PolicyPrecheckResult> {
     const { pubkey, amountLamports, protocol } = input;
@@ -82,8 +82,9 @@ export class PolicyPrecheckService {
 
     if (!vault) {
       return {
-        allowed: true,
-        reason: 'No policy found — proceeding without limits',
+        allowed: false,
+        reason: 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.',
+        rejectionField: 'not_onboarded',
         amountLamports: numericAmountLamports,
         protocol,
         effectiveSpendLamports: 0,

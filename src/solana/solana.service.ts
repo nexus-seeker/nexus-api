@@ -184,6 +184,40 @@ export class SolanaService {
         };
     }
 
+    /**
+     * Broadcasts a signed VersionedTransaction (base64) to devnet and waits for confirmation.
+     * Used by the mobile client to relay signed onboarding txs through the API, since the
+     * device may not have direct access to the Solana devnet RPC.
+     *
+     * IMPORTANT: Do NOT modify the transaction message (e.g. replace blockhash) after the wallet
+     * has signed it — any message change invalidates the signature.
+     */
+    async broadcastSignedTx(signedTxBase64: string): Promise<{ signature: string }> {
+        const txBytes = Buffer.from(signedTxBase64, 'base64');
+        const tx = VersionedTransaction.deserialize(txBytes);
+
+        // Read the blockhash the wallet actually signed
+        const blockhash = tx.message.recentBlockhash;
+
+        // skipPreflight:true — skip client-side simulation, the wallet already signed/verified
+        const signature = await this.connection.sendRawTransaction(tx.serialize(), {
+            skipPreflight: true,
+            maxRetries: 5,
+        });
+
+        // Get a fresh lastValidBlockHeight as an expiry proxy (blockhash rotation is ~1 min,
+        // so this is a safe approximation for the confirmation window)
+        const { lastValidBlockHeight } =
+            await this.connection.getLatestBlockhash('confirmed');
+
+        await this.connection.confirmTransaction(
+            { signature, blockhash, lastValidBlockHeight },
+            'confirmed',
+        );
+
+        this.logger.log(`Broadcast confirmed: ${signature}`);
+        return { signature };
+    }
     // ─── Borsh Decoders (manual, no IDL dependency) ──────────────────
 
     private decodePolicyVault(data: Buffer): any {

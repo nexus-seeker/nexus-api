@@ -3,6 +3,7 @@ import { TxAssemblerService } from './tx-assembler.service';
 import { PolicyPrecheckService } from './policy-precheck.service';
 import { RunStreamService } from './run-stream.service';
 import { LlmService } from './llm/llm.service';
+import { SolanaService } from '../solana/solana.service';
 import {
   parseIntentNode,
   buildTransactionNode,
@@ -30,8 +31,14 @@ describe('AgentService', () => {
     getLlm: jest.fn().mockReturnValue({ invoke: jest.fn() }),
   } as unknown as LlmService;
 
+  // Default: wallet is onboarded
+  const mockSolanaService = {
+    fetchAgentProfile: jest.fn().mockResolvedValue({ owner: '11111111111111111111111111111111' }),
+  } as unknown as SolanaService;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    (mockSolanaService.fetchAgentProfile as jest.Mock).mockResolvedValue({ owner: '11111111111111111111111111111111' });
   });
 
   it.each([undefined, ''])(
@@ -49,7 +56,7 @@ describe('AgentService', () => {
       } as unknown as PolicyPrecheckService;
       const runStream = createRunStreamMock();
 
-      const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+      const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
       (parseIntentNode as jest.Mock).mockResolvedValue({
         action: 'swap',
@@ -102,7 +109,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -154,7 +161,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -216,7 +223,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -263,7 +270,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -297,24 +304,20 @@ describe('AgentService', () => {
     );
   });
 
-  it('continues to tx build when policy vault is missing', async () => {
+  it('rejects with not_onboarded when AgentProfile is missing', async () => {
     const txAssembler = {
-      assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
-      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
+      assembleTransaction: jest.fn(),
+      simulateUnsignedTx: jest.fn(),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
-      precheck: jest.fn().mockResolvedValue({
-        allowed: true,
-        reason: 'No policy found — proceeding without limits',
-        amountLamports: 100000000,
-        protocol: 'jupiter',
-        effectiveSpendLamports: 0,
-        projectedSpendLamports: 100000000,
-      }),
+      precheck: jest.fn(),
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
+    const notOnboardedSolanaService = {
+      fetchAgentProfile: jest.fn().mockResolvedValue(null),
+    } as unknown as SolanaService;
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, notOnboardedSolanaService);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -322,33 +325,22 @@ describe('AgentService', () => {
       protocol: 'jupiter',
       steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
     });
-    (buildTransactionNode as jest.Mock).mockResolvedValue({
-      jupiterInstructions: { swapTransaction: 'jupiter-tx' },
-      steps: [
-        {
-          type: 'step',
-          node: 'build_transaction',
-          status: 'success',
-          label: 'built',
-        },
-      ],
-    });
 
     const result = await service.executeAgent(
       'swap 0.1 SOL to USDC',
       '11111111111111111111111111111111',
     );
 
-    expect(buildTransactionNode).toHaveBeenCalled();
-    expect(txAssembler.assembleTransaction).toHaveBeenCalled();
-    expect(result.unsignedTx).toBe('assembled-tx');
-    expect(result.rejection).toBeUndefined();
+    expect(policyPrecheck.precheck).not.toHaveBeenCalled();
+    expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
+    expect(result.rejection?.policyField).toBe('not_onboarded');
+    expect(result.rejection?.reason).toContain('POST /policy/onboard');
     expect(result.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           node: 'validate_policy',
-          status: 'success',
-          label: expect.stringContaining('No policy found'),
+          status: 'rejected',
+          label: expect.stringContaining('POST /policy/onboard'),
         }),
       ]),
     );
@@ -367,7 +359,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -415,7 +407,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'transfer',
@@ -446,18 +438,34 @@ describe('AgentService', () => {
     expect(result.rejection).toBeUndefined();
   });
 
-  it.each([
-    {
-      name: 'invalid pubkey input',
-      pubkey: 'not-a-valid-solana-pubkey',
-      error: new Error('Invalid public key input'),
-    },
-    {
-      name: 'policy fetch service throws',
-      pubkey: '11111111111111111111111111111111',
-      error: new Error('policy vault fetch failed'),
-    },
-  ])('returns structured rejection when precheck fails unexpectedly: $name', async ({ pubkey, error }) => {
+  it('rejects with agent_execution when pubkey is invalid', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn(),
+      simulateUnsignedTx: jest.fn(),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn(),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+    });
+
+    const result = await service.executeAgent('swap 0.1 SOL to USDC', 'not-a-valid-solana-pubkey');
+
+    expect(policyPrecheck.precheck).not.toHaveBeenCalled();
+    expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
+    expect(result.rejection?.policyField).toBe('agent_execution');
+  });
+
+  it('returns structured rejection when policy precheck service throws', async () => {
+    const error = new Error('policy vault fetch failed');
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
       simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
@@ -467,7 +475,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -478,7 +486,7 @@ describe('AgentService', () => {
       ],
     });
 
-    const result = await service.executeAgent('swap 0.1 SOL to USDC', pubkey);
+    const result = await service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
 
     expect(buildTransactionNode).not.toHaveBeenCalled();
     expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
@@ -510,7 +518,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     const parseStep = {
       type: 'step',
@@ -569,7 +577,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockRejectedValue(new Error('parse exploded'));
 
@@ -613,7 +621,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
 
     (parseIntentNode as jest.Mock).mockReturnValue(parsePromise);
 

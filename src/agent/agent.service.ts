@@ -8,6 +8,7 @@ import { TxAssemblerService } from './tx-assembler.service';
 import { PolicyPrecheckService } from './policy-precheck.service';
 import { RunStreamService } from './run-stream.service';
 import { LlmService } from './llm/llm.service';
+import { SolanaService } from '../solana/solana.service';
 
 @Injectable()
 export class AgentService {
@@ -18,6 +19,7 @@ export class AgentService {
         private readonly policyPrecheck: PolicyPrecheckService,
         private readonly runStream: RunStreamService,
         private readonly llmService: LlmService,
+        private readonly solanaService: SolanaService,
     ) { }
 
     startAgentRun(intent: string, pubkey: string): AgentRunResult {
@@ -113,6 +115,22 @@ export class AgentService {
             }
 
             if (state.rejectionReason) {
+                return this.finishRun(runId, allSteps, state);
+            }
+
+            // Node 1.5: Onboarding Guard — fail fast if wallet not initialized
+            const ownerKey = new PublicKey(pubkey);
+            const agentProfile = await this.solanaService.fetchAgentProfile(ownerKey);
+            if (!agentProfile) {
+                const notOnboardedStep: StepEvent = {
+                    node: 'validate_policy',
+                    status: 'rejected',
+                    label: 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.',
+                };
+                this.emitStep(runId, allSteps, notOnboardedStep);
+                state.policyValid = false;
+                state.rejectionReason = 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.';
+                state.rejectionField = 'not_onboarded';
                 return this.finishRun(runId, allSteps, state);
             }
 
@@ -218,9 +236,22 @@ export class AgentService {
 
                 state.unsignedTxBase64 = txBase64;
 
-                const simulation = await this.txAssembler.simulateUnsignedTx(txBase64);
+                // Simulation is best-effort — Jupiter DEX programs (Orca, Raydium, etc.)
+                // don't exist on devnet, so simulating the full tx will throw
+                // InvalidProgramForExecution. We still return the unsigned tx for signing.
+                // Real policy enforcement happens atomically on-chain.
+                let simulationFee = 5000; // default lamport estimate
+                try {
+                    const simulation = await this.txAssembler.simulateUnsignedTx(txBase64);
+                    simulationFee = simulation.fee;
+                } catch (simErr: any) {
+                    this.logger.warn(
+                        `[${runId}] Simulation skipped (non-fatal): ${simErr?.message ?? simErr}`,
+                    );
+                }
+
                 state.simulationResult = {
-                    fee: simulation.fee,
+                    fee: simulationFee,
                     outAmount: state.simulationResult?.outAmount || (protocol === 'spl_transfer' ? (state.amountLamports || 0) : 0),
                     priceImpact: state.simulationResult?.priceImpact || '0.00%',
                 };

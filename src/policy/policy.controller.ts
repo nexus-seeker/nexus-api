@@ -8,12 +8,16 @@ import {
     UseGuards,
 } from '@nestjs/common';
 import { PolicyService } from './policy.service';
+import { SolanaService } from '../solana/solana.service';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 
 @Controller('policy')
 @UseGuards(ApiKeyGuard)
 export class PolicyController {
-    constructor(private readonly policyService: PolicyService) { }
+    constructor(
+        private readonly policyService: PolicyService,
+        private readonly solanaService: SolanaService,
+    ) { }
 
     @Get()
     async getPolicy(@Query('pubkey') pubkey: string) {
@@ -23,6 +27,44 @@ export class PolicyController {
         const policy = await this.policyService.getPolicy(pubkey);
         return { policy };
     }
+
+    /**
+     * POST /policy/onboard
+     *
+     * Returns a single unsigned VersionedTransaction (onboardTx) containing
+     * create_profile (+ update_policy if needed).
+     * Idempotent: returns { alreadyOnboarded: true } if already set up.
+     */
+    @Post('onboard')
+    async onboard(@Body() body: { pubkey: string }) {
+        if (!body || typeof body.pubkey !== 'string' || body.pubkey.trim().length === 0) {
+            throw new BadRequestException('pubkey is required');
+        }
+
+        const result = await this.policyService.buildOnboardTxs(body.pubkey);
+        return result;
+    }
+
+    /**
+     * POST /policy/onboard/broadcast
+     *
+     * Accepts a signed base64 VersionedTransaction and broadcasts it to devnet.
+     * Used by mobile clients that cannot reach the Solana RPC directly (USB/ADB tunnel setup).
+     */
+    @Post('onboard/broadcast')
+    async broadcastOnboard(@Body() body: { signedTx: string }) {
+        if (!body || typeof body.signedTx !== 'string' || body.signedTx.trim().length === 0) {
+            throw new BadRequestException('signedTx (base64) is required');
+        }
+
+        try {
+            const result = await this.solanaService.broadcastSignedTx(body.signedTx);
+            return result;
+        } catch (err: any) {
+            throw new BadRequestException(`Broadcast failed: ${err?.message}`);
+        }
+    }
+
 
     @Post('update')
     async updatePolicy(
