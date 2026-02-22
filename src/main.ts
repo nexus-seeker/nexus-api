@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as dotenv from 'dotenv';
+import { RpcErrorFilter } from './common/filters/rpc-error.filter';
 
 async function bootstrap() {
   dotenv.config();
@@ -13,6 +14,9 @@ async function bootstrap() {
 
   // Global validation pipe
   app.useGlobalPipes(new ValidationPipe());
+
+  // Global RPC error filter
+  app.useGlobalFilters(new RpcErrorFilter());
 
   // Set global prefix to /api
   app.setGlobalPrefix('api');
