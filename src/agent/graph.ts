@@ -1,4 +1,6 @@
 import type { AgentState, StepEvent } from './state';
+import type { LlmClient } from './llm/llm.interface';
+import { PublicKey } from '@solana/web3.js';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -17,6 +19,7 @@ type ParsedIntentPayload = {
     amountSOL: number;
     tokenIn?: string;
     tokenOut?: string;
+    recipientPubkey?: string;
 };
 
 function isParsedIntentPayload(value: unknown): value is ParsedIntentPayload {
@@ -34,22 +37,56 @@ function isParsedIntentPayload(value: unknown): value is ParsedIntentPayload {
         Number.isFinite(payload.amountSOL) &&
         payload.amountSOL > 0;
     const hasValidTokenIn =
-        payload.tokenIn === undefined || typeof payload.tokenIn === 'string';
+        payload.tokenIn === undefined || payload.tokenIn === null || typeof payload.tokenIn === 'string';
     const hasValidTokenOut =
-        payload.tokenOut === undefined || typeof payload.tokenOut === 'string';
+        payload.tokenOut === undefined || payload.tokenOut === null || typeof payload.tokenOut === 'string';
+    const hasValidRecipientPubkey =
+        payload.recipientPubkey === undefined || payload.recipientPubkey === null || typeof payload.recipientPubkey === 'string';
 
     return (
         hasValidAction &&
         hasValidProtocol &&
         hasValidAmount &&
         hasValidTokenIn &&
-        hasValidTokenOut
+        hasValidTokenOut &&
+        hasValidRecipientPubkey
     );
+}
+
+function normalizePubkey(input?: string): string | undefined {
+    if (!input) {
+        return undefined;
+    }
+
+    try {
+        return new PublicKey(input).toBase58();
+    } catch {
+        return undefined;
+    }
+}
+
+function extractPubkeyFromIntent(intent: string): string | undefined {
+    const matches = intent.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g);
+    if (!matches) {
+        return undefined;
+    }
+
+    for (const candidate of matches) {
+        const normalized = normalizePubkey(candidate);
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    return undefined;
 }
 
 // ─── Node 1: Intent Parser ─────────────────────────────────────────
 
-export async function parseIntentNode(state: AgentState): Promise<Partial<AgentState>> {
+export async function parseIntentNode(
+    state: AgentState,
+    llm: LlmClient,
+): Promise<Partial<AgentState>> {
     const step: StepEvent = {
         node: 'parse_intent',
         label: 'Parsing intent...',
@@ -57,30 +94,6 @@ export async function parseIntentNode(state: AgentState): Promise<Partial<AgentS
     };
 
     try {
-        const llmProvider = (process.env.LLM_PROVIDER || 'openai').toLowerCase();
-
-        if (llmProvider !== 'openai') {
-            return {
-                policyValid: false,
-                rejectionReason: `Unsupported LLM provider: ${llmProvider}. MVP currently supports openai only.`,
-                rejectionField: 'intent',
-                steps: [
-                    {
-                        ...step,
-                        status: 'rejected',
-                        label: `Parse failed: unsupported provider ${llmProvider}`,
-                    },
-                ],
-            };
-        }
-
-        const { ChatOpenAI } = await import('@langchain/openai');
-        const llm = new ChatOpenAI({
-            modelName: process.env.LLM_MODEL || 'gpt-4o-mini',
-            apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
-            temperature: 0,
-        });
-
         const response = await llm.invoke([
             {
                 role: 'system',
@@ -137,19 +150,36 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
         }
 
         const amountLamports = Math.round(parsed.amountSOL * 1e9);
+        const protocol = parsed.protocol || 'jupiter';
+        const tokenIn = parsed.tokenIn?.toUpperCase() || 'SOL';
+        const tokenOut = protocol === 'jupiter'
+            ? parsed.tokenOut?.toUpperCase() || 'USDC'
+            : undefined;
+        const recipientPubkey = protocol === 'spl_transfer'
+            ? normalizePubkey(parsed.recipientPubkey) || extractPubkeyFromIntent(state.intent) || state.pubkey
+            : undefined;
+
+        const transferLabel = recipientPubkey
+            ? `Parsing: transfer ${parsed.amountSOL} ${tokenIn} to ${recipientPubkey}`
+            : `Parsing: transfer ${parsed.amountSOL} ${tokenIn}`;
+        const swapLabel = `Parsing: ${parsed.action} ${parsed.amountSOL} ${tokenIn} to ${tokenOut}`;
 
         return {
             action: parsed.action,
-            tokenIn: parsed.tokenIn?.toUpperCase() || 'SOL',
-            tokenOut: parsed.tokenOut?.toUpperCase() || 'USDC',
+            tokenIn,
+            tokenOut,
             amountLamports,
-            protocol: parsed.protocol || 'jupiter',
+            protocol,
+            recipientPubkey,
             steps: [
                 {
                     ...step,
                     status: 'success',
-                    label: `Parsing: ${parsed.action} ${parsed.amountSOL} ${parsed.tokenIn} to ${parsed.tokenOut}`,
-                    payload: parsed,
+                    label: parsed.action === 'transfer' ? transferLabel : swapLabel,
+                    payload: {
+                        ...parsed,
+                        recipientPubkey,
+                    },
                 },
             ],
         };
@@ -222,15 +252,55 @@ export async function buildTransactionNode(
     };
 
     try {
+        if (state.protocol === 'spl_transfer') {
+            if (!state.recipientPubkey) {
+                return {
+                    policyValid: false,
+                    rejectionReason: 'Missing recipient pubkey for SPL transfer intent',
+                    rejectionField: 'intent',
+                    steps: [{ ...step, status: 'rejected', label: 'Transfer recipient is missing' }],
+                };
+            }
+
+            return {
+                simulationResult: {
+                    fee: 5000,
+                    outAmount: 0,
+                    priceImpact: '0.00%',
+                },
+                steps: [
+                    {
+                        ...step,
+                        status: 'success',
+                        label: `SPL transfer prepared: ${(state.amountLamports || 0) / 1e9} SOL to ${state.recipientPubkey}`,
+                        payload: {
+                            recipientPubkey: state.recipientPubkey,
+                            amountLamports: state.amountLamports,
+                        },
+                    },
+                ],
+            };
+        }
+
         const jupiterApiUrl =
-            process.env.JUPITER_API_URL || 'https://quote-api.jup.ag/v6';
+            (process.env.JUPITER_API_URL || 'https://api.jup.ag/swap/v1').replace(/\/+$/, '');
+        const jupiterApiKey = process.env.JUPITER_API_KEY;
+        const jupiterHeaders: Record<string, string> = {};
+        if (jupiterApiKey) {
+            jupiterHeaders['x-api-key'] = jupiterApiKey;
+        }
 
         const inputMint = MINT_MAP[state.tokenIn || 'SOL'] || MINT_MAP.SOL;
         const outputMint = MINT_MAP[state.tokenOut || 'USDC'] || MINT_MAP.USDC;
+        const onlyDirectRoutes =
+            (process.env.JUPITER_ONLY_DIRECT_ROUTES || 'true').toLowerCase() === 'true';
+        const maxAccounts = Number(process.env.JUPITER_MAX_ACCOUNTS || 32);
 
         // 1. Get quote
-        const quoteUrl = `${jupiterApiUrl}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${state.amountLamports}&slippageBps=50`;
-        const quoteResponse = await fetch(quoteUrl);
+        const quoteUrl = `${jupiterApiUrl}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${state.amountLamports}&slippageBps=50&onlyDirectRoutes=${onlyDirectRoutes}&maxAccounts=${maxAccounts}`;
+        const quoteResponse = await fetch(quoteUrl, {
+            headers: jupiterHeaders,
+        });
 
         if (!quoteResponse.ok) {
             throw new Error(`Jupiter quote failed: ${quoteResponse.status}`);
@@ -241,7 +311,10 @@ export async function buildTransactionNode(
         // 2. Get swap instructions
         const swapResponse = await fetch(`${jupiterApiUrl}/swap-instructions`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                ...jupiterHeaders,
+            },
             body: JSON.stringify({
                 quoteResponse: quote,
                 userPublicKey: state.pubkey,
@@ -278,12 +351,17 @@ export async function buildTransactionNode(
             ],
         };
     } catch (err: any) {
+        const rootCause = err?.cause?.message
+            ? `: ${err.cause.message}`
+            : '';
+        const message = `${err.message || 'Unknown Jupiter error'}${rootCause}`;
+
         return {
             policyValid: false,
-            rejectionReason: `Jupiter API error: ${err.message}`,
+            rejectionReason: `Jupiter API error: ${message}`,
             rejectionField: 'jupiter',
             steps: [
-                { ...step, status: 'rejected', label: `Jupiter error: ${err.message}` },
+                { ...step, status: 'rejected', label: `Jupiter error: ${message}` },
             ],
         };
     }

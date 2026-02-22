@@ -136,4 +136,67 @@ describe('TxAssemblerService', () => {
       cleanupProgram,
     ]);
   });
+
+  it('assembles SPL transfer with check_and_record first', async () => {
+    const recipient = new PublicKey('EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ');
+    const solana = createSolanaMock({
+      fetchPolicyVault: jest.fn().mockResolvedValue({ nextReceiptId: 11 }),
+    });
+    const service = new TxAssemblerService(solana);
+
+    const txBase64 = await service.assembleSplTransferTransaction(
+      owner,
+      recipient,
+      10_000_000,
+    );
+
+    expect(txBase64).toBe('assembled-base64');
+    const buildCall = (solana as any).buildVersionedTransaction.mock.calls[0];
+    const passedInstructions = buildCall[1];
+
+    expect(buildCall[0]).toEqual(owner);
+    expect(buildCall[2]).toEqual([]);
+    expect(passedInstructions).toHaveLength(2);
+    expect(passedInstructions[0].programId.toBase58()).toBe(nexusProgramId.toBase58());
+    expect(passedInstructions[1].programId.toBase58()).toBe('11111111111111111111111111111111');
+  });
+
+  it('retries without cleanup instruction when first assembly overflows transaction size', async () => {
+    const setupProgram = 'ComputeBudget111111111111111111111111111111';
+    const swapProgram = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3L7N4j7n8Yq7X7qf';
+    const cleanupProgram = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
+    const solana = createSolanaMock({
+      buildVersionedTransaction: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('encoding overruns Uint8Array'))
+        .mockResolvedValueOnce('assembled-base64'),
+    });
+
+    const service = new TxAssemblerService(solana);
+
+    const txBase64 = await service.assembleTransaction(owner, 100_000_000, 'jupiter', {
+      setupInstructions: [toJupiterIx(setupProgram, 1)],
+      swapInstruction: toJupiterIx(swapProgram, 2),
+      cleanupInstruction: toJupiterIx(cleanupProgram, 3),
+      addressLookupTableAddresses: [],
+    });
+
+    expect(txBase64).toBe('assembled-base64');
+    expect((solana as any).buildVersionedTransaction).toHaveBeenCalledTimes(2);
+
+    const firstCallInstructions = (solana as any).buildVersionedTransaction.mock.calls[0][1];
+    const secondCallInstructions = (solana as any).buildVersionedTransaction.mock.calls[1][1];
+
+    expect(firstCallInstructions.slice(1).map((ix: any) => ix.programId.toBase58())).toEqual([
+      setupProgram,
+      swapProgram,
+      cleanupProgram,
+    ]);
+
+    expect(secondCallInstructions.slice(1).map((ix: any) => ix.programId.toBase58())).toEqual([
+      setupProgram,
+      swapProgram,
+    ]);
+  });
 });

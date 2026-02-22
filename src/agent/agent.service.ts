@@ -7,6 +7,7 @@ import { parseIntentNode, buildTransactionNode } from './graph';
 import { TxAssemblerService } from './tx-assembler.service';
 import { PolicyPrecheckService } from './policy-precheck.service';
 import { RunStreamService } from './run-stream.service';
+import { LlmService } from './llm/llm.service';
 
 @Injectable()
 export class AgentService {
@@ -16,6 +17,7 @@ export class AgentService {
         private readonly txAssembler: TxAssemblerService,
         private readonly policyPrecheck: PolicyPrecheckService,
         private readonly runStream: RunStreamService,
+        private readonly llmService: LlmService,
     ) { }
 
     startAgentRun(intent: string, pubkey: string): AgentRunResult {
@@ -101,7 +103,8 @@ export class AgentService {
             // ─── Real Execution ────────────────────────────────────────
 
             // Node 1: Parse Intent
-            const parseResult = await parseIntentNode(state);
+            const llm = this.llmService.getLlm();
+            const parseResult = await parseIntentNode(state, llm);
             Object.assign(state, parseResult);
             if (parseResult.steps) {
                 for (const step of parseResult.steps) {
@@ -182,16 +185,32 @@ export class AgentService {
             };
 
             try {
-                if (!state.jupiterInstructions) {
-                    throw new Error('Missing Jupiter instructions');
-                }
+                const ownerPubkey = new PublicKey(pubkey);
+                const protocol = state.protocol || 'jupiter';
 
-                const txBase64 = await this.txAssembler.assembleTransaction(
-                    new PublicKey(pubkey),
-                    state.amountLamports || 0,
-                    state.protocol || 'jupiter',
-                    state.jupiterInstructions,
-                );
+                let txBase64: string;
+                if (protocol === 'spl_transfer') {
+                    if (!state.recipientPubkey) {
+                        throw new Error('Missing transfer recipient pubkey');
+                    }
+
+                    txBase64 = await this.txAssembler.assembleSplTransferTransaction(
+                        ownerPubkey,
+                        new PublicKey(state.recipientPubkey),
+                        state.amountLamports || 0,
+                    );
+                } else {
+                    if (!state.jupiterInstructions) {
+                        throw new Error('Missing Jupiter instructions');
+                    }
+
+                    txBase64 = await this.txAssembler.assembleTransaction(
+                        ownerPubkey,
+                        state.amountLamports || 0,
+                        protocol,
+                        state.jupiterInstructions,
+                    );
+                }
 
                 if (!txBase64) {
                     throw new Error('Assembler returned empty transaction');
@@ -202,7 +221,7 @@ export class AgentService {
                 const simulation = await this.txAssembler.simulateUnsignedTx(txBase64);
                 state.simulationResult = {
                     fee: simulation.fee,
-                    outAmount: state.simulationResult?.outAmount || 0,
+                    outAmount: state.simulationResult?.outAmount || (protocol === 'spl_transfer' ? (state.amountLamports || 0) : 0),
                     priceImpact: state.simulationResult?.priceImpact || '0.00%',
                 };
 

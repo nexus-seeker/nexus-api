@@ -30,6 +30,7 @@ interface JupiterInstructionsPayload {
 @Injectable()
 export class TxAssemblerService {
     private readonly logger = new Logger(TxAssemblerService.name);
+    private readonly maxRawTransactionBytes = 1232;
 
     constructor(private readonly solanaService: SolanaService) { }
 
@@ -86,6 +87,33 @@ export class TxAssemblerService {
      *
      * Returns the serialized base64 transaction ready for mobile signing.
      */
+    async assembleSplTransferTransaction(
+        owner: PublicKey,
+        recipient: PublicKey,
+        amount: number,
+    ): Promise<string> {
+        const vault = await this.solanaService.fetchPolicyVault(owner);
+        const receiptId = vault?.nextReceiptId ?? 0;
+
+        const checkAndRecordIx = this.buildCheckAndRecordIxWithReceiptId(
+            owner,
+            amount,
+            'spl_transfer',
+            receiptId,
+        );
+
+        const transferIx = SystemProgram.transfer({
+            fromPubkey: owner,
+            toPubkey: recipient,
+            lamports: amount,
+        });
+
+        return this.solanaService.buildVersionedTransaction(owner, [
+            checkAndRecordIx,
+            transferIx,
+        ], []);
+    }
+
     async assembleTransaction(
         owner: PublicKey,
         amount: number,
@@ -106,14 +134,6 @@ export class TxAssemblerService {
 
         // 3. Decode Jupiter instructions from the API response
         const payload = this.parseJupiterPayload(jupiterInstructions);
-        const jupiterIxs = this.decodeJupiterInstructions(payload);
-
-        // 4. Combine: [check_and_record, ...jupiterIxs]
-        const allInstructions = [checkAndRecordIx, ...jupiterIxs];
-        this.logger.log(
-            `Assembled ${allInstructions.length} instructions ` +
-            `(1 check_and_record + ${jupiterIxs.length} Jupiter)`,
-        );
 
         const lookupTableAddresses =
             payload.addressLookupTableAddresses || [];
@@ -121,12 +141,64 @@ export class TxAssemblerService {
             lookupTableAddresses,
         );
 
+        const buildCandidate = async (includeCleanupInstruction: boolean) => {
+            const jupiterIxs = this.decodeJupiterInstructions(
+                payload,
+                includeCleanupInstruction,
+            );
+
+            const allInstructions = [checkAndRecordIx, ...jupiterIxs];
+            this.logger.log(
+                `Assembled ${allInstructions.length} instructions ` +
+                `(1 check_and_record + ${jupiterIxs.length} Jupiter)`,
+            );
+
+            const txBase64 = await this.solanaService.buildVersionedTransaction(
+                owner,
+                allInstructions,
+                lookupTableAccounts,
+            );
+
+            return {
+                txBase64,
+                includeCleanupInstruction,
+            };
+        };
+
+        const hasCleanupInstruction = payload.cleanupInstruction != null;
+        let built: { txBase64: string; includeCleanupInstruction: boolean };
+
+        try {
+            built = await buildCandidate(hasCleanupInstruction);
+        } catch (err) {
+            if (hasCleanupInstruction && this.isTransactionTooLargeError(err)) {
+                this.logger.warn(
+                    'Transaction exceeded size limit with cleanup ix; retrying without cleanup instruction',
+                );
+                built = await buildCandidate(false);
+            } else {
+                throw err;
+            }
+        }
+
+        if (
+            built.includeCleanupInstruction &&
+            this.isSerializedTransactionTooLarge(built.txBase64)
+        ) {
+            this.logger.warn(
+                'Transaction payload too large after serialization; retrying without cleanup instruction',
+            );
+            built = await buildCandidate(false);
+        }
+
+        if (this.isSerializedTransactionTooLarge(built.txBase64)) {
+            throw new Error(
+                `Assembled transaction exceeds Solana size limit (${this.maxRawTransactionBytes} raw bytes)`,
+            );
+        }
+
         // 5. Build VersionedTransaction → base64
-        return this.solanaService.buildVersionedTransaction(
-            owner,
-            allInstructions,
-            lookupTableAccounts,
-        );
+        return built.txBase64;
     }
 
     async simulateUnsignedTx(unsignedTxBase64: string): Promise<{ fee: number }> {
@@ -139,6 +211,7 @@ export class TxAssemblerService {
      */
     private decodeJupiterInstructions(
         jupiterResult: JupiterInstructionsPayload,
+        includeCleanupInstruction = true,
     ): TransactionInstruction[] {
         const instructions: TransactionInstruction[] = [];
 
@@ -163,7 +236,7 @@ export class TxAssemblerService {
         }
 
         // Cleanup instruction (close temp accounts)
-        if (jupiterResult.cleanupInstruction) {
+        if (includeCleanupInstruction && jupiterResult.cleanupInstruction) {
             instructions.push(
                 this.decodeInstruction(jupiterResult.cleanupInstruction),
             );
@@ -314,6 +387,18 @@ export class TxAssemblerService {
         }
 
         return /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+    }
+
+    private isSerializedTransactionTooLarge(base64: string): boolean {
+        return Buffer.from(base64, 'base64').byteLength > this.maxRawTransactionBytes;
+    }
+
+    private isTransactionTooLargeError(error: unknown): boolean {
+        const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+        return (
+            message.includes('encoding overruns uint8array') ||
+            message.includes('too large')
+        );
     }
 
     /**

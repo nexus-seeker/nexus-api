@@ -15,6 +15,7 @@ export interface AgentState {
     tokenOut?: string;
     amountLamports?: number;
     protocol?: string;
+    recipientPubkey?: string;
 
     // Policy check
     policyValid?: boolean;
