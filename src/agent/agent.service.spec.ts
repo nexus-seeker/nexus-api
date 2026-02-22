@@ -34,6 +34,7 @@ describe('AgentService', () => {
     async (assembledTx) => {
       const txAssembler = {
         assembleTransaction: jest.fn().mockResolvedValue(assembledTx),
+        simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
       } as unknown as TxAssemblerService;
       const policyPrecheck = {
         precheck: jest.fn().mockResolvedValue({
@@ -86,6 +87,7 @@ describe('AgentService', () => {
   it('rejects tx_assembly when build node omits jupiterInstructions', async () => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn().mockResolvedValue({
@@ -137,6 +139,7 @@ describe('AgentService', () => {
   it('rejects tx_assembly failures without falling back to assembleTxNode', async () => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockRejectedValue(new Error('assembler down')),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn().mockResolvedValue({
@@ -195,15 +198,62 @@ describe('AgentService', () => {
     );
   });
 
+  it('uses fallback tx_assembly error when thrown value has no message', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockRejectedValue({ code: 'ASSEMBLY_FAILED' }),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: true,
+        reason: 'Policy precheck passed.',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [
+        { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
+      ],
+    });
+    (buildTransactionNode as jest.Mock).mockResolvedValue({
+      jupiterInstructions: { swapTransaction: 'fallback-unsigned-tx' },
+      steps: [
+        {
+          type: 'step',
+          node: 'build_transaction',
+          status: 'success',
+          label: 'built',
+        },
+      ],
+    });
+
+    const result = await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
+
+    expect(result.rejection).toEqual({
+      reason: 'Tx assembly failed: Unknown tx assembly error',
+      policyField: 'tx_assembly',
+    });
+  });
+
   it('rejects before tx build when policy precheck fails', async () => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn().mockResolvedValue({
         allowed: false,
-        rejectionField: 'daily_max_lamports',
-        reason: 'Daily spending limit exceeded for this policy window.',
+        rejectionField: 'daily_max',
+        reason: 'Daily max exceeded: requested 0.1 SOL, cap 0.05 SOL, remaining 0 SOL.',
       }),
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
@@ -226,30 +276,35 @@ describe('AgentService', () => {
 
     expect(buildTransactionNode).not.toHaveBeenCalled();
     expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
-    expect(result.rejection).toEqual({
-      reason: 'Daily spending limit exceeded for this policy window.',
-      policyField: 'daily_max_lamports',
-    });
+    expect(result.rejection?.policyField).toBe('daily_max');
+    expect(result.rejection?.reason).toContain('Daily max exceeded');
+    expect(result.rejection?.reason).toContain('requested 0.1 SOL');
+    expect(result.rejection?.reason).toContain('cap 0.05 SOL');
+    expect(result.rejection?.reason).toContain('remaining 0 SOL');
     expect(result.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           node: 'validate_policy',
           status: 'rejected',
-          label: expect.stringContaining('Daily spending limit exceeded'),
+          label: expect.stringContaining('Daily max exceeded'),
         }),
       ]),
     );
   });
 
-  it('rejects before tx build when policy vault is missing', async () => {
+  it('continues to tx build when policy vault is missing', async () => {
     const txAssembler = {
-      assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+      assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn().mockResolvedValue({
-        allowed: false,
-        rejectionField: 'policy_missing',
-        reason: 'Policy not initialized. Initialize policy vault first.',
+        allowed: true,
+        reason: 'No policy found — proceeding without limits',
+        amountLamports: 100000000,
+        protocol: 'jupiter',
+        effectiveSpendLamports: 0,
+        projectedSpendLamports: 100000000,
       }),
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
@@ -262,27 +317,83 @@ describe('AgentService', () => {
       protocol: 'jupiter',
       steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
     });
+    (buildTransactionNode as jest.Mock).mockResolvedValue({
+      jupiterInstructions: { swapTransaction: 'jupiter-tx' },
+      steps: [
+        {
+          type: 'step',
+          node: 'build_transaction',
+          status: 'success',
+          label: 'built',
+        },
+      ],
+    });
 
     const result = await service.executeAgent(
       'swap 0.1 SOL to USDC',
       '11111111111111111111111111111111',
     );
 
-    expect(buildTransactionNode).not.toHaveBeenCalled();
-    expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
-    expect(result.rejection).toEqual({
-      reason: 'Policy not initialized. Initialize policy vault first.',
-      policyField: 'policy_missing',
-    });
+    expect(buildTransactionNode).toHaveBeenCalled();
+    expect(txAssembler.assembleTransaction).toHaveBeenCalled();
+    expect(result.unsignedTx).toBe('assembled-tx');
+    expect(result.rejection).toBeUndefined();
     expect(result.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           node: 'validate_policy',
-          status: 'rejected',
-          label: expect.stringContaining('Policy not initialized'),
+          status: 'success',
+          label: expect.stringContaining('No policy found'),
         }),
       ]),
     );
+  });
+
+  it('uses RPC simulation fee while preserving quote outAmount and priceImpact', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 9123 }),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: true,
+        reason: 'Policy precheck passed.',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream);
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+    });
+    (buildTransactionNode as jest.Mock).mockResolvedValue({
+      jupiterInstructions: { swapTransaction: 'jupiter-tx' },
+      simulationResult: { fee: 5000, outAmount: 14230000, priceImpact: '0.02%' },
+      steps: [
+        {
+          type: 'step',
+          node: 'build_transaction',
+          status: 'success',
+          label: 'built',
+        },
+      ],
+    });
+
+    const result = await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
+
+    expect(txAssembler.simulateUnsignedTx).toHaveBeenCalledWith('assembled-tx');
+    expect(result.simulation).toEqual({
+      fee: 9123,
+      outAmount: 14230000,
+      priceImpact: '0.02%',
+    });
   });
 
   it.each([
@@ -299,6 +410,7 @@ describe('AgentService', () => {
   ])('returns structured rejection when precheck fails unexpectedly: $name', async ({ pubkey, error }) => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn().mockRejectedValue(error),
@@ -338,6 +450,7 @@ describe('AgentService', () => {
   it('emits stream step and complete events while executing', async () => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn().mockResolvedValue({
@@ -377,24 +490,26 @@ describe('AgentService', () => {
       'swap 0.1 SOL to USDC',
       '11111111111111111111111111111111',
     );
+    const runId = result.runId;
 
-    expect(runStream.createRun).toHaveBeenCalledWith('run-id');
-    expect(runStream.emitStep).toHaveBeenCalledWith('run-id', parseStep);
+    expect(runStream.createRun).toHaveBeenCalledWith(runId);
+    expect(runStream.emitStep).toHaveBeenCalledWith(runId, parseStep);
     expect(runStream.emitStep).toHaveBeenCalledWith(
-      'run-id',
+      runId,
       expect.objectContaining({ node: 'validate_policy', status: 'success' }),
     );
-    expect(runStream.emitStep).toHaveBeenCalledWith('run-id', buildStep);
+    expect(runStream.emitStep).toHaveBeenCalledWith(runId, buildStep);
     expect(runStream.emitStep).toHaveBeenCalledWith(
-      'run-id',
+      runId,
       expect.objectContaining({ node: 'assemble_tx', status: 'success' }),
     );
-    expect(runStream.emitComplete).toHaveBeenCalledWith('run-id', result);
+    expect(runStream.emitComplete).toHaveBeenCalledWith(runId, result);
   });
 
   it('finalizes stream with rejection when a graph node throws unexpectedly', async () => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn().mockResolvedValue({
@@ -408,11 +523,13 @@ describe('AgentService', () => {
 
     (parseIntentNode as jest.Mock).mockRejectedValue(new Error('parse exploded'));
 
-    await expect(
-      service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111'),
-    ).resolves.toEqual(
+    const result = await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
+
+    expect(result).toEqual(
       expect.objectContaining({
-        runId: 'run-id',
         rejection: {
           reason: 'Agent execution failed: parse exploded',
           policyField: 'agent_execution',
@@ -421,7 +538,7 @@ describe('AgentService', () => {
     );
 
     expect(runStream.emitComplete).toHaveBeenCalledWith(
-      'run-id',
+      result.runId,
       expect.objectContaining({
         rejection: {
           reason: 'Agent execution failed: parse exploded',
@@ -439,6 +556,7 @@ describe('AgentService', () => {
 
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
     } as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn(),
@@ -453,9 +571,10 @@ describe('AgentService', () => {
       'swap 0.1 SOL to USDC',
       '11111111111111111111111111111111',
     );
+    const runId = initial.runId;
 
-    expect(initial).toEqual({ runId: 'run-id', steps: [] });
-    expect(runStream.createRun).toHaveBeenCalledWith('run-id');
+    expect(initial).toEqual({ runId, steps: [] });
+    expect(runStream.createRun).toHaveBeenCalledWith(runId);
     expect(runStream.emitComplete).not.toHaveBeenCalled();
     expect(policyPrecheck.precheck).not.toHaveBeenCalled();
 
@@ -476,9 +595,9 @@ describe('AgentService', () => {
     await Promise.resolve();
 
     expect(runStream.emitComplete).toHaveBeenCalledWith(
-      'run-id',
+      runId,
       expect.objectContaining({
-        runId: 'run-id',
+        runId,
         steps: expect.arrayContaining([
           expect.objectContaining({ node: 'parse_intent', status: 'rejected' }),
         ]),

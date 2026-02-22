@@ -1,15 +1,7 @@
-import { ChatOpenAI } from '@langchain/openai';
 import type { AgentState, StepEvent } from './state';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
-
-// ─── LLM ───────────────────────────────────────────────────────────
-
-const llm = new ChatOpenAI({
-    modelName: process.env.LLM_MODEL || 'gpt-4o-mini',
-    temperature: 0,
-});
 
 // ─── Token Mint Map ────────────────────────────────────────────────
 
@@ -19,17 +11,76 @@ const MINT_MAP: Record<string, string> = {
     USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
 };
 
+type ParsedIntentPayload = {
+    action: 'swap' | 'transfer';
+    protocol: 'jupiter' | 'spl_transfer';
+    amountSOL: number;
+    tokenIn?: string;
+    tokenOut?: string;
+};
+
+function isParsedIntentPayload(value: unknown): value is ParsedIntentPayload {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+
+    const payload = value as Record<string, unknown>;
+
+    const hasValidAction = payload.action === 'swap' || payload.action === 'transfer';
+    const hasValidProtocol =
+        payload.protocol === 'jupiter' || payload.protocol === 'spl_transfer';
+    const hasValidAmount =
+        typeof payload.amountSOL === 'number' &&
+        Number.isFinite(payload.amountSOL) &&
+        payload.amountSOL > 0;
+    const hasValidTokenIn =
+        payload.tokenIn === undefined || typeof payload.tokenIn === 'string';
+    const hasValidTokenOut =
+        payload.tokenOut === undefined || typeof payload.tokenOut === 'string';
+
+    return (
+        hasValidAction &&
+        hasValidProtocol &&
+        hasValidAmount &&
+        hasValidTokenIn &&
+        hasValidTokenOut
+    );
+}
+
 // ─── Node 1: Intent Parser ─────────────────────────────────────────
 
 export async function parseIntentNode(state: AgentState): Promise<Partial<AgentState>> {
     const step: StepEvent = {
-        type: 'step',
         node: 'parse_intent',
         label: 'Parsing intent...',
         status: 'running',
     };
 
     try {
+        const llmProvider = (process.env.LLM_PROVIDER || 'openai').toLowerCase();
+
+        if (llmProvider !== 'openai') {
+            return {
+                policyValid: false,
+                rejectionReason: `Unsupported LLM provider: ${llmProvider}. MVP currently supports openai only.`,
+                rejectionField: 'intent',
+                steps: [
+                    {
+                        ...step,
+                        status: 'rejected',
+                        label: `Parse failed: unsupported provider ${llmProvider}`,
+                    },
+                ],
+            };
+        }
+
+        const { ChatOpenAI } = await import('@langchain/openai');
+        const llm = new ChatOpenAI({
+            modelName: process.env.LLM_MODEL || 'gpt-4o-mini',
+            apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
+            temperature: 0,
+        });
+
         const response = await llm.invoke([
             {
                 role: 'system',
@@ -69,7 +120,23 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
             };
         }
 
-        const amountLamports = Math.round((parsed.amountSOL || 0) * 1e9);
+        if (!isParsedIntentPayload(parsed)) {
+            return {
+                policyValid: false,
+                rejectionReason: 'Invalid intent payload from parser',
+                rejectionField: 'intent',
+                steps: [
+                    {
+                        ...step,
+                        status: 'rejected',
+                        label: 'Parse failed: invalid intent payload',
+                        payload: parsed,
+                    },
+                ],
+            };
+        }
+
+        const amountLamports = Math.round(parsed.amountSOL * 1e9);
 
         return {
             action: parsed.action,
@@ -102,7 +169,6 @@ export async function validatePolicyNode(
     state: AgentState,
 ): Promise<Partial<AgentState>> {
     const step: StepEvent = {
-        type: 'step',
         node: 'validate_policy',
         label: 'Checking policy...',
         status: 'running',
@@ -150,7 +216,6 @@ export async function buildTransactionNode(
     state: AgentState,
 ): Promise<Partial<AgentState>> {
     const step: StepEvent = {
-        type: 'step',
         node: 'build_transaction',
         label: 'Building transaction...',
         status: 'running',
@@ -230,7 +295,6 @@ export async function assembleTxNode(
     state: AgentState,
 ): Promise<Partial<AgentState>> {
     const step: StepEvent = {
-        type: 'step',
         node: 'assemble_tx',
         label: 'Assembling transaction...',
         status: 'running',
@@ -246,14 +310,21 @@ export async function assembleTxNode(
         // For now, we return the Jupiter swap transaction directly
         // The full TxAssembler will be wired when the deployed IDL is available
 
-        if (!state.jupiterInstructions) {
-            throw new Error('No Jupiter instructions available');
+        const swapTx = state.jupiterInstructions?.swapTransaction;
+        if (typeof swapTx !== 'string' || swapTx.trim().length === 0) {
+            return {
+                policyValid: false,
+                rejectionReason: 'No valid Jupiter swap transaction available for assembly',
+                rejectionField: 'tx_assembly',
+                steps: [
+                    {
+                        ...step,
+                        status: 'rejected',
+                        label: 'Assembly rejected: missing Jupiter swap transaction',
+                    },
+                ],
+            };
         }
-
-        // If Jupiter returned a swapTransaction directly, use it
-        const swapTx =
-            state.jupiterInstructions.swapTransaction ||
-            'PLACEHOLDER_TX_NEEDS_IDL_WIRING';
 
         return {
             unsignedTxBase64: swapTx,
@@ -269,6 +340,7 @@ export async function assembleTxNode(
         return {
             policyValid: false,
             rejectionReason: `Tx assembly failed: ${err.message}`,
+            rejectionField: 'tx_assembly',
             steps: [
                 { ...step, status: 'rejected', label: `Assembly error: ${err.message}` },
             ],
@@ -280,6 +352,9 @@ export async function assembleTxNode(
 
 export function policyRouter(state: AgentState): 'build_transaction' | '__end__' {
     if (state.policyValid === false || state.rejectionReason) {
+        return '__end__';
+    }
+    if (state.protocol !== 'jupiter') {
         return '__end__';
     }
     return 'build_transaction';

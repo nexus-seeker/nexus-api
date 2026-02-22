@@ -13,6 +13,7 @@ import { Observable } from 'rxjs';
 import { AgentService } from './agent.service';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { RunStreamService } from './run-stream.service';
+import type { ExecuteRequest, ExecuteResponse, SSEMessage } from '../contracts/mvp';
 
 @Controller('agent')
 @UseGuards(ApiKeyGuard)
@@ -26,12 +27,17 @@ export class AgentController {
 
     @Post('execute')
     async execute(
-        @Body() body: { intent: string; pubkey: string },
-    ) {
-        const { intent, pubkey } = body;
+        @Body() body?: ExecuteRequest,
+    ): Promise<ExecuteResponse | { error: string }> {
+        const intent = body?.intent;
+        const pubkey = body?.pubkey;
 
         if (!intent || !pubkey) {
             return { error: 'Both intent and pubkey are required' };
+        }
+
+        if (process.env.MOCK_MODE === 'true') {
+            return this.agentService.getMockResponse();
         }
 
         const result = this.agentService.startAgentRun(intent, pubkey);
@@ -43,18 +49,13 @@ export class AgentController {
         return new Observable((observer) => {
             const runStream$ = this.runStream.subscribe(runId);
             if (!runStream$) {
+                const payload: SSEMessage = {
+                    type: 'error',
+                    message: 'Run not found or expired',
+                };
+
                 observer.next({
-                    data: JSON.stringify({
-                        type: 'complete',
-                        result: {
-                            runId,
-                            steps: [],
-                            rejection: {
-                                reason: 'Run not found or expired',
-                                policyField: 'run_not_found',
-                            },
-                        },
-                    }),
+                    data: JSON.stringify(payload),
                 } as MessageEvent);
                 observer.complete();
                 return;

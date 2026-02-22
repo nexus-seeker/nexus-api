@@ -218,7 +218,7 @@ describe('AgentController stream', () => {
     expect(payloads).toEqual([{ type: 'heartbeat' }]);
   });
 
-  it('closes unknown run streams immediately with deterministic complete payload', () => {
+  it('closes unknown run streams immediately with deterministic error payload', () => {
     const runStream = new RunStreamService();
     const agentService = {} as AgentService;
     const controller = new AgentController(agentService, runStream);
@@ -234,15 +234,8 @@ describe('AgentController stream', () => {
 
     expect(payloads).toEqual([
       {
-        type: 'complete',
-        result: {
-          runId: 'unknown-run',
-          steps: [],
-          rejection: {
-            reason: 'Run not found or expired',
-            policyField: 'run_not_found',
-          },
-        },
+        type: 'error',
+        message: 'Run not found or expired',
       },
     ]);
     expect(onComplete).toHaveBeenCalledTimes(1);

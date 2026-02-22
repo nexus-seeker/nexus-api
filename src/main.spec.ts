@@ -50,6 +50,7 @@ describe('main bootstrap', () => {
 
     const [registeredFilter] = app.useGlobalFilters.mock.calls[0];
     expect(registeredFilter.constructor.name).toBe('RpcErrorFilter');
+    expect(app.setGlobalPrefix).not.toHaveBeenCalled();
     expect(SwaggerModule.setup).toHaveBeenCalled();
   });
 });
