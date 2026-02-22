@@ -18,7 +18,7 @@ export class SolanaService {
         const rpcUrl = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
         this.connection = new Connection(rpcUrl, 'confirmed');
         this.programId = new PublicKey(
-            process.env.NEXUS_PROGRAM_ID || 'DxV7vXf919YddC74X726PpsrPpHLXNZtdBsk6Lweh3HJ',
+            process.env.NEXUS_PROGRAM_ID || '5twpBNVkDu9YkuQ2aDRWTB1wvA4wjBu42Q42kn7Fy2G5',
         );
         this.logger.log(`Solana RPC: ${rpcUrl}`);
         this.logger.log(`Program ID: ${this.programId.toBase58()}`);
@@ -138,6 +138,50 @@ export class SolanaService {
 
         const tx = new VersionedTransaction(messageV0);
         return Buffer.from(tx.serialize()).toString('base64');
+    }
+
+    async resolveAddressLookupTables(
+        addresses: string[] = [],
+    ): Promise<AddressLookupTableAccount[]> {
+        if (!addresses.length) {
+            return [];
+        }
+
+        const tables = await Promise.all(
+            addresses.map(async (address) => {
+                try {
+                    const key = new PublicKey(address);
+                    const result = await this.connection.getAddressLookupTable(key);
+                    return result.value;
+                } catch (err) {
+                    this.logger.warn(`Failed to fetch ALT ${address}: ${err}`);
+                    return null;
+                }
+            }),
+        );
+
+        return tables.filter((table): table is AddressLookupTableAccount => table !== null);
+    }
+
+    async simulateUnsignedTx(unsignedTxBase64: string): Promise<{ fee: number }> {
+        const tx = VersionedTransaction.deserialize(
+            Buffer.from(unsignedTxBase64, 'base64'),
+        );
+
+        const simulation = await this.connection.simulateTransaction(tx, {
+            sigVerify: false,
+            replaceRecentBlockhash: true,
+        });
+
+        if (simulation.value.err) {
+            throw new Error(`Simulation failed: ${JSON.stringify(simulation.value.err)}`);
+        }
+
+        const feeResponse = await this.connection.getFeeForMessage(tx.message, 'confirmed');
+
+        return {
+            fee: feeResponse.value ?? 0,
+        };
     }
 
     // ─── Borsh Decoders (manual, no IDL dependency) ──────────────────

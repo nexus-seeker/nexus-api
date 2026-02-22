@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PublicKey } from '@solana/web3.js';
 import type { AgentState, StepEvent, AgentRunResult } from './state';
+import type { ExecuteResponse } from '../contracts/mvp';
 import { parseIntentNode, buildTransactionNode } from './graph';
 import { TxAssemblerService } from './tx-assembler.service';
 import { PolicyPrecheckService } from './policy-precheck.service';
@@ -41,6 +42,40 @@ export class AgentService {
         return this.executeAgentWithRunId(intent, pubkey, runId);
     }
 
+    public getMockResponse(): ExecuteResponse {
+        return {
+            runId: crypto.randomUUID(),
+            steps: [
+                {
+                    node: 'parse_intent',
+                    label: 'Parsing: swap 0.1 SOL to USDC',
+                    status: 'success',
+                },
+                {
+                    node: 'validate_policy',
+                    label: 'Policy check passed \u2713',
+                    status: 'success',
+                },
+                {
+                    node: 'build_transaction',
+                    label: 'Jupiter quote: 0.1 SOL \u2192 14.23 USDC (0.02% impact)',
+                    status: 'success',
+                },
+                {
+                    node: 'assemble_tx',
+                    label: 'Transaction assembled with policy enforcement \u2713',
+                    status: 'success',
+                },
+            ],
+            unsignedTx: 'MOCK_BASE64_TX_BYTES',
+            simulation: {
+                fee: 5000,
+                outAmount: 14230000,
+                priceImpact: '0.02%',
+            },
+        };
+    }
+
     private initializeRun(intent: string, pubkey: string): string {
         const runId = crypto.randomUUID();
         this.logger.log(`[${runId}] Starting agent run: "${intent}" for ${pubkey}`);
@@ -63,11 +98,6 @@ export class AgentService {
         const allSteps: StepEvent[] = [];
 
         try {
-            // ─── Mock Mode ─────────────────────────────────────────────
-            if (process.env.MOCK_MODE === 'true') {
-                return this.mockResponse(runId);
-            }
-
             // ─── Real Execution ────────────────────────────────────────
 
             // Node 1: Parse Intent
@@ -98,7 +128,6 @@ export class AgentService {
                 state.rejectionReason = `Policy precheck failed: ${errorMessage}`;
                 state.rejectionField = 'policy_fetch';
                 this.emitStep(runId, allSteps, {
-                    type: 'step',
                     node: 'validate_policy',
                     status: 'rejected',
                     label: `Policy precheck error: ${errorMessage}`,
@@ -107,7 +136,6 @@ export class AgentService {
             }
 
             this.emitStep(runId, allSteps, {
-                type: 'step',
                 node: 'validate_policy',
                 status: precheck.allowed ? 'success' : 'rejected',
                 label: precheck.allowed
@@ -148,7 +176,6 @@ export class AgentService {
 
             // Node 4: Assemble Transaction (prepend check_and_record_ix)
             const assembleStep: StepEvent = {
-                type: 'step',
                 node: 'assemble_tx',
                 label: 'Assembling transaction...',
                 status: 'running',
@@ -163,7 +190,6 @@ export class AgentService {
                     new PublicKey(pubkey),
                     state.amountLamports || 0,
                     state.protocol || 'jupiter',
-                    intent,
                     state.jupiterInstructions,
                 );
 
@@ -173,19 +199,27 @@ export class AgentService {
 
                 state.unsignedTxBase64 = txBase64;
 
+                const simulation = await this.txAssembler.simulateUnsignedTx(txBase64);
+                state.simulationResult = {
+                    fee: simulation.fee,
+                    outAmount: state.simulationResult?.outAmount || 0,
+                    priceImpact: state.simulationResult?.priceImpact || '0.00%',
+                };
+
                 this.emitStep(runId, allSteps, {
                     ...assembleStep,
                     status: 'success',
                     label: 'Transaction assembled with policy enforcement ✓',
                 });
             } catch (err: any) {
-                this.logger.error(`[${runId}] TxAssembly error: ${err.message}`);
-                state.rejectionReason = `Tx assembly failed: ${err.message}`;
+                const errorMessage = err?.message || 'Unknown tx assembly error';
+                this.logger.error(`[${runId}] TxAssembly error: ${errorMessage}`);
+                state.rejectionReason = `Tx assembly failed: ${errorMessage}`;
                 state.rejectionField = 'tx_assembly';
                 this.emitStep(runId, allSteps, {
                     ...assembleStep,
                     status: 'rejected',
-                    label: `Assembly error: ${err.message}`,
+                    label: `Assembly error: ${errorMessage}`,
                 });
             }
 
@@ -196,8 +230,7 @@ export class AgentService {
             state.rejectionReason = `Agent execution failed: ${errorMessage}`;
             state.rejectionField = 'agent_execution';
             this.emitStep(runId, allSteps, {
-                type: 'step',
-                node: 'agent_execution',
+                node: 'error',
                 status: 'rejected',
                 label: `Execution error: ${errorMessage}`,
             });
@@ -228,53 +261,6 @@ export class AgentService {
         }
 
         this.runStream.emitComplete(runId, result);
-        return result;
-    }
-
-    private mockResponse(runId: string): AgentRunResult {
-        const steps: StepEvent[] = [
-            {
-                type: 'step',
-                node: 'parse_intent',
-                label: 'Parsing: swap 0.1 SOL to USDC',
-                status: 'success',
-            },
-            {
-                type: 'step',
-                node: 'validate_policy',
-                label: 'Policy check passed ✓',
-                status: 'success',
-            },
-            {
-                type: 'step',
-                node: 'build_transaction',
-                label: 'Jupiter quote: 0.1 SOL → 14.23 USDC (0.02% impact)',
-                status: 'success',
-            },
-            {
-                type: 'step',
-                node: 'assemble_tx',
-                label: 'Transaction assembled with policy enforcement ✓',
-                status: 'success',
-            },
-        ];
-
-        for (const step of steps) {
-            this.runStream.emitStep(runId, step);
-        }
-
-        const result = {
-            runId,
-            steps,
-            unsignedTx: 'MOCK_BASE64_TX_BYTES',
-            simulation: {
-                fee: 5000,
-                outAmount: 14230000,
-                priceImpact: '0.02%',
-            },
-        };
-        this.runStream.emitComplete(runId, result);
-
         return result;
     }
 

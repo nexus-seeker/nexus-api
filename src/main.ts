@@ -18,9 +18,6 @@ async function bootstrap() {
   // Global RPC error filter
   app.useGlobalFilters(new RpcErrorFilter());
 
-  // Set global prefix to /api
-  app.setGlobalPrefix('api');
-
   // Swagger setup
   const config = new DocumentBuilder()
     .setTitle('Nexus Agentic API')

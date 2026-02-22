@@ -1,27 +1,7 @@
-// AgentState — the linear 4-node graph state
-export interface StepEvent {
-    type: 'step' | 'heartbeat' | 'complete';
-    node?: string;
-    label?: string;
-    status?: 'running' | 'success' | 'rejected';
-    payload?: any;
-    result?: AgentRunResult;
-}
+import type { ExecuteResponse, StepEvent } from '../contracts/mvp';
 
-export interface AgentRunResult {
-    runId: string;
-    steps: StepEvent[];
-    unsignedTx?: string;
-    rejection?: {
-        reason: string;
-        policyField: string;
-    };
-    simulation?: {
-        fee: number;
-        outAmount: number;
-        priceImpact: string;
-    };
-}
+export type AgentRunResult = ExecuteResponse;
+export type { StepEvent } from '../contracts/mvp';
 
 export interface AgentState {
     // Input
@@ -42,8 +22,11 @@ export interface AgentState {
     rejectionField?: string;
 
     // Transaction
-    jupiterQuote?: any;
-    jupiterInstructions?: any;
+    jupiterQuote?: Record<string, unknown>;
+    jupiterInstructions?: {
+        swapTransaction?: string;
+        [key: string]: unknown;
+    };
     unsignedTxBase64?: string;
     simulationResult?: {
         fee: number;

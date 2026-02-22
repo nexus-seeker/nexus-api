@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { Observable, ReplaySubject } from 'rxjs';
+import type { SSEMessage } from '../contracts/mvp';
 import type { AgentRunResult, StepEvent } from './state';
 
-export type RunStreamEvent =
-  | { type: 'step'; step: StepEvent }
-  | { type: 'complete'; result: AgentRunResult };
+export type RunStreamEvent = Extract<SSEMessage, { type: 'step' | 'complete' }>;
 
 @Injectable()
 export class RunStreamService {
