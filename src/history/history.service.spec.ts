@@ -2,7 +2,7 @@ import { PrismaService } from '../database/prisma.service';
 import { HistoryService } from './history.service';
 
 describe('HistoryService', () => {
-  it('returns tie-safe nextCursor with beforeTs and beforeId', async () => {
+  it('returns timestamp nextCursor and tie-safe nextCursorId', async () => {
     const findMany = jest.fn().mockResolvedValue([
       {
         id: 'msg-3',
@@ -39,10 +39,8 @@ describe('HistoryService', () => {
     const result = await service.getHistory('wallet-1', 2);
 
     expect(result.messages).toHaveLength(2);
-    expect(result.nextCursor).toEqual({
-      beforeTs: 1700000002000,
-      beforeId: 'msg-2',
-    });
+    expect(result.nextCursor).toBe(1700000002000);
+    expect(result.nextCursorId).toBe('msg-2');
   });
 
   it('uses tie-safe cursor where condition when beforeTs and beforeId are provided', async () => {

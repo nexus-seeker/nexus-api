@@ -16,6 +16,8 @@ describe('HistoryController', () => {
             timestamp: 1700000000000,
           },
         ],
+        nextCursor: 1700000000000,
+        nextCursorId: 'msg-1',
       }),
     };
     const controller = new HistoryController(historyService as any);
@@ -25,6 +27,8 @@ describe('HistoryController', () => {
     expect(historyService.getHistory).toHaveBeenCalledWith(TEST_PUBKEY, 50, undefined, undefined);
     expect(result.messages).toBeDefined();
     expect(Array.isArray(result.messages)).toBe(true);
+    expect(result.nextCursor).toBe(1700000000000);
+    expect(result.nextCursorId).toBe('msg-1');
   });
 
   it('passes beforeTs and beforeId cursor to service', async () => {

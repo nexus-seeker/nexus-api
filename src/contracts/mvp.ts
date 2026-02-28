@@ -71,10 +71,8 @@ export interface MessageDto {
 
 export interface HistoryResponse {
   messages: MessageDto[];
-  nextCursor?: {
-    beforeTs: number;
-    beforeId: string;
-  };
+  nextCursor?: number;
+  nextCursorId?: string;
 }
 
 export type SSEMessage =

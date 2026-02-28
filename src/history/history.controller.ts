@@ -1,5 +1,6 @@
 import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
+import type { HistoryResponse } from '../contracts/mvp';
 import { HistoryService } from './history.service';
 
 const DEFAULT_LIMIT = 50;
@@ -17,7 +18,7 @@ export class HistoryController {
     @Query('limit') limit = '50',
     @Query('beforeTs') beforeTs?: string,
     @Query('beforeId') beforeId?: string,
-  ) {
+  ): Promise<HistoryResponse> {
     if (typeof pubkey !== 'string' || pubkey.trim().length === 0) {
       throw new BadRequestException('pubkey query parameter is required');
     }

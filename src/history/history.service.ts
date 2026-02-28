@@ -40,16 +40,13 @@ export class HistoryService {
 
     const hasMore = messagesDesc.length > normalizedLimit;
     const pageDesc = hasMore ? messagesDesc.slice(0, normalizedLimit) : messagesDesc;
-    const nextCursor = hasMore
-      ? {
-          beforeTs: pageDesc[pageDesc.length - 1]?.eventAt.getTime(),
-          beforeId: pageDesc[pageDesc.length - 1]?.id,
-        }
-      : undefined;
+    const nextCursorTs = hasMore ? pageDesc[pageDesc.length - 1]?.eventAt.getTime() : undefined;
+    const nextCursorId = hasMore ? pageDesc[pageDesc.length - 1]?.id : undefined;
 
     return {
       messages: pageDesc.reverse().map((message) => this.toMessageDto(message)),
-      ...(nextCursor?.beforeTs !== undefined && nextCursor.beforeId !== undefined ? { nextCursor } : {}),
+      ...(nextCursorTs !== undefined ? { nextCursor: nextCursorTs } : {}),
+      ...(nextCursorId !== undefined ? { nextCursorId } : {}),
     };
   }
 
