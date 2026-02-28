@@ -1,18 +1,35 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
 import { PrismaService } from '../database/prisma.service';
 import { SolanaService } from '../solana/solana.service';
 
 const DEFAULT_RECEIPTS_LIMIT = 20;
+const DEFAULT_RECONCILIATION_INTERVAL_MS = 60_000;
 
 @Injectable()
-export class ReceiptReconcilerService {
+export class ReceiptReconcilerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ReceiptReconcilerService.name);
+  private reconciliationTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly solanaService: SolanaService,
   ) {}
+
+  onModuleInit(): void {
+    this.reconciliationTimer = setInterval(() => {
+      void this.syncRecentOwners().catch((error) => {
+        this.logger.warn(`Scheduled receipt reconciliation failed: ${String(error)}`);
+      });
+    }, DEFAULT_RECONCILIATION_INTERVAL_MS);
+  }
+
+  onModuleDestroy(): void {
+    if (this.reconciliationTimer) {
+      clearInterval(this.reconciliationTimer);
+      this.reconciliationTimer = undefined;
+    }
+  }
 
   async syncOwner(pubkey: string, limit = DEFAULT_RECEIPTS_LIMIT): Promise<number> {
     const owner = new PublicKey(pubkey);

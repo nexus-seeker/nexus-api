@@ -40,4 +40,54 @@ describe('ReceiptReconcilerService', () => {
       }),
     );
   });
+
+  it('schedules periodic reconciliation on module init', () => {
+    jest.useFakeTimers();
+
+    const solana = {
+      fetchReceiptsByOwner: jest.fn(),
+    } as unknown as SolanaService;
+
+    const prisma = {
+      receiptCache: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    } as unknown as PrismaService;
+
+    const service = new ReceiptReconcilerService(prisma, solana);
+    const syncRecentOwnersSpy = jest.spyOn(service, 'syncRecentOwners').mockResolvedValue(undefined);
+
+    (service as { onModuleInit: () => void }).onModuleInit();
+    jest.advanceTimersByTime(60_000);
+
+    expect(syncRecentOwnersSpy).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it('cleans up periodic reconciliation timer on module destroy', () => {
+    jest.useFakeTimers();
+
+    const solana = {
+      fetchReceiptsByOwner: jest.fn(),
+    } as unknown as SolanaService;
+
+    const prisma = {
+      receiptCache: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    } as unknown as PrismaService;
+
+    const service = new ReceiptReconcilerService(prisma, solana);
+    const syncRecentOwnersSpy = jest.spyOn(service, 'syncRecentOwners').mockResolvedValue(undefined);
+
+    (service as { onModuleInit: () => void }).onModuleInit();
+    jest.advanceTimersByTime(60_000);
+    expect(syncRecentOwnersSpy).toHaveBeenCalledTimes(1);
+
+    (service as { onModuleDestroy: () => void }).onModuleDestroy();
+    jest.advanceTimersByTime(60_000);
+
+    expect(syncRecentOwnersSpy).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
 });
