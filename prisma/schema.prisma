@@ -19,3 +19,36 @@ model RunEvent {
   @@unique([runId, seq])
   @@map("run_events")
 }
+
+model AgentRun {
+  runId          String                @id
+  pubkey         String
+  status         String
+  intent         String?
+  latestStep     Json?
+  completedAt    DateTime?
+  rejectedReason String?
+  lastEventSeq   Int                   @default(0)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  messages       ConversationMessage[]
+
+  @@index([pubkey, updatedAt])
+  @@map("agent_runs")
+}
+
+model ConversationMessage {
+  id        String   @id @default(cuid())
+  runId     String
+  pubkey    String
+  seq       Int
+  role      String
+  content   String
+  payload   Json?
+  createdAt DateTime @default(now())
+  agentRun  AgentRun @relation(fields: [runId], references: [runId], onDelete: Cascade)
+
+  @@unique([runId, seq])
+  @@index([pubkey, createdAt])
+  @@map("conversation_messages")
+}
