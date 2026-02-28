@@ -9,6 +9,8 @@ import { PolicyPrecheckService } from './policy-precheck.service';
 import { RunStreamService } from './run-stream.service';
 import { LlmService } from './llm/llm.service';
 import { SolanaService } from '../solana/solana.service';
+import { HistoryEventsService } from '../history/history-events.service';
+import { HistoryProjectionService } from '../history/history-projection.service';
 
 @Injectable()
 export class AgentService {
@@ -20,6 +22,8 @@ export class AgentService {
         private readonly runStream: RunStreamService,
         private readonly llmService: LlmService,
         private readonly solanaService: SolanaService,
+        private readonly historyEvents?: HistoryEventsService,
+        private readonly historyProjection?: HistoryProjectionService,
     ) { }
 
     startAgentRun(intent: string, pubkey: string): AgentRunResult {
@@ -102,6 +106,9 @@ export class AgentService {
         const allSteps: StepEvent[] = [];
 
         try {
+            await this.persistLifecycleEvent(runId, pubkey, 'run_started', { intent });
+            await this.persistLifecycleEvent(runId, pubkey, 'message_user', { content: intent });
+
             // ─── Real Execution ────────────────────────────────────────
 
             // Node 1: Parse Intent
@@ -110,7 +117,7 @@ export class AgentService {
             Object.assign(state, parseResult);
             if (parseResult.steps) {
                 for (const step of parseResult.steps) {
-                    this.emitStep(runId, allSteps, step);
+                    await this.emitStep(runId, pubkey, allSteps, step);
                 }
             }
 
@@ -127,7 +134,7 @@ export class AgentService {
                     status: 'rejected',
                     label: 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.',
                 };
-                this.emitStep(runId, allSteps, notOnboardedStep);
+                await this.emitStep(runId, pubkey, allSteps, notOnboardedStep);
                 state.policyValid = false;
                 state.rejectionReason = 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.';
                 state.rejectionField = 'not_onboarded';
@@ -148,7 +155,7 @@ export class AgentService {
                 state.policyValid = false;
                 state.rejectionReason = `Policy precheck failed: ${errorMessage}`;
                 state.rejectionField = 'policy_fetch';
-                this.emitStep(runId, allSteps, {
+                await this.emitStep(runId, pubkey, allSteps, {
                     node: 'validate_policy',
                     status: 'rejected',
                     label: `Policy precheck error: ${errorMessage}`,
@@ -156,7 +163,7 @@ export class AgentService {
                 return this.finishRun(runId, allSteps, state);
             }
 
-            this.emitStep(runId, allSteps, {
+            await this.emitStep(runId, pubkey, allSteps, {
                 node: 'validate_policy',
                 status: precheck.allowed ? 'success' : 'rejected',
                 label: precheck.allowed
@@ -187,7 +194,7 @@ export class AgentService {
             Object.assign(state, buildResult);
             if (buildResult.steps) {
                 for (const step of buildResult.steps) {
-                    this.emitStep(runId, allSteps, step);
+                    await this.emitStep(runId, pubkey, allSteps, step);
                 }
             }
 
@@ -256,7 +263,7 @@ export class AgentService {
                     priceImpact: state.simulationResult?.priceImpact || '0.00%',
                 };
 
-                this.emitStep(runId, allSteps, {
+                await this.emitStep(runId, pubkey, allSteps, {
                     ...assembleStep,
                     status: 'success',
                     label: 'Transaction assembled with policy enforcement ✓',
@@ -266,7 +273,7 @@ export class AgentService {
                 this.logger.error(`[${runId}] TxAssembly error: ${errorMessage}`);
                 state.rejectionReason = `Tx assembly failed: ${errorMessage}`;
                 state.rejectionField = 'tx_assembly';
-                this.emitStep(runId, allSteps, {
+                await this.emitStep(runId, pubkey, allSteps, {
                     ...assembleStep,
                     status: 'rejected',
                     label: `Assembly error: ${errorMessage}`,
@@ -279,7 +286,7 @@ export class AgentService {
             this.logger.error(`[${runId}] Agent execution error: ${errorMessage}`);
             state.rejectionReason = `Agent execution failed: ${errorMessage}`;
             state.rejectionField = 'agent_execution';
-            this.emitStep(runId, allSteps, {
+            await this.emitStep(runId, pubkey, allSteps, {
                 node: 'error',
                 status: 'rejected',
                 label: `Execution error: ${errorMessage}`,
@@ -288,11 +295,11 @@ export class AgentService {
         }
     }
 
-    private finishRun(
+    private async finishRun(
         runId: string,
         steps: StepEvent[],
         state: AgentState,
-    ): AgentRunResult {
+    ): Promise<AgentRunResult> {
         const result: AgentRunResult = { runId, steps };
 
         if (state.unsignedTxBase64) {
@@ -310,12 +317,55 @@ export class AgentService {
             result.simulation = state.simulationResult;
         }
 
+        if (result.rejection) {
+            await this.persistLifecycleEvent(runId, state.pubkey, 'run_rejected', {
+                reason: result.rejection.reason,
+                policyField: result.rejection.policyField,
+                intent: state.intent,
+                steps,
+            });
+        } else {
+            await this.persistLifecycleEvent(runId, state.pubkey, 'run_completed', {
+                intent: state.intent,
+                steps,
+                unsignedTx: result.unsignedTx,
+                simulation: result.simulation,
+            });
+        }
+
         this.runStream.emitComplete(runId, result);
         return result;
     }
 
-    private emitStep(runId: string, allSteps: StepEvent[], step: StepEvent): void {
+    private async emitStep(runId: string, pubkey: string, allSteps: StepEvent[], step: StepEvent): Promise<void> {
+        await this.persistLifecycleEvent(runId, pubkey, 'step_emitted', { step });
         allSteps.push(step);
         this.runStream.emitStep(runId, step);
+    }
+
+    private async persistLifecycleEvent(
+        runId: string,
+        pubkey: string,
+        type: string,
+        payload: Record<string, unknown>,
+    ): Promise<void> {
+        if (!this.historyEvents || !this.historyProjection) {
+            return;
+        }
+
+        try {
+            const event = await this.historyEvents.append({ runId, pubkey, type, payload });
+            await this.historyProjection.project({
+                runId: event.runId,
+                pubkey: event.pubkey,
+                type: event.eventType,
+                seq: event.seq,
+                eventAt: event.createdAt,
+                payload: event.payload,
+            });
+        } catch (error: any) {
+            const message = error?.message || 'Unknown persistence error';
+            this.logger.error(`[${runId}] Lifecycle persistence failed for ${type}: ${message}`);
+        }
     }
 }

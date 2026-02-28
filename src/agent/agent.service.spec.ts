@@ -4,6 +4,8 @@ import { PolicyPrecheckService } from './policy-precheck.service';
 import { RunStreamService } from './run-stream.service';
 import { LlmService } from './llm/llm.service';
 import { SolanaService } from '../solana/solana.service';
+import { HistoryEventsService } from '../history/history-events.service';
+import { HistoryProjectionService } from '../history/history-projection.service';
 import {
   parseIntentNode,
   buildTransactionNode,
@@ -26,6 +28,14 @@ describe('AgentService', () => {
     emitStep: jest.fn(),
     emitComplete: jest.fn(),
   }) as unknown as RunStreamService;
+
+  const createHistoryEventsMock = () => ({
+    append: jest.fn(),
+  }) as unknown as HistoryEventsService;
+
+  const createHistoryProjectionMock = () => ({
+    project: jest.fn(),
+  }) as unknown as HistoryProjectionService;
 
   const mockLlmService = {
     getLlm: jest.fn().mockReturnValue({ invoke: jest.fn() }),
@@ -505,6 +515,106 @@ describe('AgentService', () => {
     );
   });
 
+  it('writes run_started, message_user, step_emitted, and run_completed events in order', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: true,
+        reason: 'Policy precheck passed.',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+    const historyEvents = createHistoryEventsMock();
+    const historyProjection = createHistoryProjectionMock();
+
+    (historyEvents.append as jest.Mock)
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 1, eventType: 'run_started', createdAt: new Date('2026-02-28T12:00:00.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 2, eventType: 'message_user', createdAt: new Date('2026-02-28T12:00:01.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 3, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:02.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 4, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:03.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 5, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:04.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 6, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:05.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 7, eventType: 'run_completed', createdAt: new Date('2026-02-28T12:00:06.000Z') });
+
+    const service = new (AgentService as any)(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      historyEvents,
+      historyProjection,
+    ) as AgentService;
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+    });
+    (buildTransactionNode as jest.Mock).mockResolvedValue({
+      jupiterInstructions: { swapTransaction: 'jupiter-tx' },
+      steps: [{ type: 'step', node: 'build_transaction', status: 'success', label: 'built' }],
+    });
+
+    await service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+
+    expect(historyEvents.append).toHaveBeenNthCalledWith(1, expect.objectContaining({ type: 'run_started' }));
+    expect(historyEvents.append).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: 'message_user' }));
+    expect(historyEvents.append).toHaveBeenCalledWith(expect.objectContaining({ type: 'step_emitted' }));
+    expect(historyEvents.append).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run_completed' }));
+    expect(historyProjection.project).toHaveBeenCalledTimes((historyEvents.append as jest.Mock).mock.calls.length);
+  });
+
+  it('writes run_rejected as the terminal event when execution is rejected', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn(),
+      simulateUnsignedTx: jest.fn(),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: false,
+        rejectionField: 'daily_max',
+        reason: 'Daily max exceeded',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+    const historyEvents = createHistoryEventsMock();
+    const historyProjection = createHistoryProjectionMock();
+
+    (historyEvents.append as jest.Mock)
+      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 1, eventType: 'run_started', createdAt: new Date('2026-02-28T12:10:00.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 2, eventType: 'message_user', createdAt: new Date('2026-02-28T12:10:01.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 3, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:10:02.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 4, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:10:03.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 5, eventType: 'run_rejected', createdAt: new Date('2026-02-28T12:10:04.000Z') });
+
+    const service = new (AgentService as any)(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      historyEvents,
+      historyProjection,
+    ) as AgentService;
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+    });
+
+    await service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+
+    expect(historyEvents.append).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run_rejected' }));
+    expect(historyEvents.append).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'run_completed' }));
+  });
+
   it('emits stream step and complete events while executing', async () => {
     const txAssembler = {
       assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
@@ -649,8 +759,8 @@ describe('AgentService', () => {
       ],
     });
 
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(runStream.emitComplete).toHaveBeenCalledWith(
       runId,
