@@ -54,3 +54,23 @@ model ConversationMessage {
   @@index([pubkey, createdAt])
   @@map("conversation_messages")
 }
+
+model ReceiptCache {
+  address        String   @id
+  ownerPubkey    String
+  agentProfile   String
+  seekerId       String
+  intentHash     Json
+  protocol       String
+  amountLamports BigInt
+  txSignature    String
+  status         String
+  timestamp      Int
+  bump           Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([ownerPubkey, timestamp])
+  @@index([ownerPubkey, updatedAt])
+  @@map("receipts_cache")
+}
