@@ -317,6 +317,8 @@ export class AgentService {
             result.simulation = state.simulationResult;
         }
 
+        this.runStream.emitComplete(runId, result);
+
         if (result.rejection) {
             await this.persistLifecycleEvent(runId, state.pubkey, 'run_rejected', {
                 reason: result.rejection.reason,
@@ -333,14 +335,13 @@ export class AgentService {
             });
         }
 
-        this.runStream.emitComplete(runId, result);
         return result;
     }
 
     private async emitStep(runId: string, pubkey: string, allSteps: StepEvent[], step: StepEvent): Promise<void> {
-        await this.persistLifecycleEvent(runId, pubkey, 'step_emitted', { step });
         allSteps.push(step);
         this.runStream.emitStep(runId, step);
+        await this.persistLifecycleEvent(runId, pubkey, 'step_emitted', { step });
     }
 
     private async persistLifecycleEvent(
