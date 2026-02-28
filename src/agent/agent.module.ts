@@ -6,27 +6,28 @@ import { PolicyPrecheckService } from './policy-precheck.service';
 import { RunStreamService } from './run-stream.service';
 import { LlmModule } from './llm/llm.module';
 import { DatabaseModule } from '../database/database.module';
+import { ProtocolsModule } from '../protocols/protocols.module';
 import { HistoryEventsService } from '../history/history-events.service';
 import { HistoryProjectionService } from '../history/history-projection.service';
 
 @Module({
-    imports: [LlmModule, DatabaseModule],
-    controllers: [AgentController],
-    providers: [
-        AgentService,
-        TxAssemblerService,
-        PolicyPrecheckService,
-        RunStreamService,
-        HistoryEventsService,
-        HistoryProjectionService,
-    ],
-    exports: [
-        AgentService,
-        TxAssemblerService,
-        PolicyPrecheckService,
-        RunStreamService,
-        HistoryEventsService,
-        HistoryProjectionService,
-    ],
+  imports: [LlmModule, DatabaseModule, ProtocolsModule],
+  controllers: [AgentController],
+  providers: [
+    AgentService,
+    TxAssemblerService,
+    PolicyPrecheckService,
+    RunStreamService,
+    HistoryEventsService,
+    HistoryProjectionService,
+  ],
+  exports: [
+    AgentService,
+    TxAssemblerService,
+    PolicyPrecheckService,
+    RunStreamService,
+    HistoryEventsService,
+    HistoryProjectionService,
+  ],
 })
-export class AgentModule { }
+export class AgentModule {}

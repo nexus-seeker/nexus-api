@@ -6,6 +6,7 @@ export interface ExecuteRequest {
 export type StepNode =
   | 'parse_intent'
   | 'validate_policy'
+  | 'select_route'
   | 'build_transaction'
   | 'assemble_tx'
   | 'error';
