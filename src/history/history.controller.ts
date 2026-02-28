@@ -35,18 +35,25 @@ export class HistoryController {
       if (parsedBeforeTs <= 0) {
         throw new BadRequestException('beforeTs must be a positive unix timestamp in milliseconds');
       }
+
+      const beforeDate = new Date(parsedBeforeTs);
+      if (Number.isNaN(beforeDate.getTime())) {
+        throw new BadRequestException('beforeTs must be a positive unix timestamp in milliseconds');
+      }
+    } else if (beforeId === undefined) {
+      parsedBeforeTs = undefined;
+    } else {
+      throw new BadRequestException('beforeId requires beforeTs');
     }
 
     let parsedBeforeId: string | undefined;
     if (beforeId !== undefined) {
-      if (parsedBeforeTs === undefined) {
-        throw new BadRequestException('beforeId requires beforeTs');
-      }
-
       parsedBeforeId = beforeId.trim();
       if (parsedBeforeId.length === 0) {
         throw new BadRequestException('beforeId must be a non-empty message id');
       }
+    } else if (parsedBeforeTs !== undefined) {
+      throw new BadRequestException('beforeTs requires beforeId');
     }
 
     return this.historyService.getHistory(pubkey, normalizedLimit, parsedBeforeTs, parsedBeforeId);

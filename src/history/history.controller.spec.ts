@@ -42,6 +42,18 @@ describe('HistoryController', () => {
     expect(historyService.getHistory).toHaveBeenCalledWith(TEST_PUBKEY, 10, 1700000000000, 'msg-9');
   });
 
+  it('throws when beforeTs is provided without beforeId', async () => {
+    const historyService = {
+      getHistory: jest.fn(),
+    };
+    const controller = new HistoryController(historyService as any);
+
+    await expect(controller.getHistory(TEST_PUBKEY, '10', '1700000000000')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(historyService.getHistory).not.toHaveBeenCalled();
+  });
+
   it('defaults limit to 50 when omitted', async () => {
     const historyService = {
       getHistory: jest.fn().mockResolvedValue({ messages: [] }),
@@ -83,6 +95,18 @@ describe('HistoryController', () => {
     const controller = new HistoryController(historyService as any);
 
     await expect(controller.getHistory(TEST_PUBKEY, '50', '1700000000000ms')).rejects.toThrow(BadRequestException);
+    expect(historyService.getHistory).not.toHaveBeenCalled();
+  });
+
+  it('throws when beforeTs is outside supported date range', async () => {
+    const historyService = {
+      getHistory: jest.fn(),
+    };
+    const controller = new HistoryController(historyService as any);
+
+    await expect(
+      controller.getHistory(TEST_PUBKEY, '50', '8640000000000001', 'msg-1'),
+    ).rejects.toThrow(BadRequestException);
     expect(historyService.getHistory).not.toHaveBeenCalled();
   });
 

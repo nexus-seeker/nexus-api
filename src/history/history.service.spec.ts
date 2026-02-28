@@ -66,4 +66,34 @@ describe('HistoryService', () => {
       }),
     );
   });
+
+  it('throws when beforeTs is provided without beforeId', async () => {
+    const findMany = jest.fn();
+
+    const prisma = {
+      conversationMessage: { findMany },
+    } as unknown as PrismaService;
+
+    const service = new HistoryService(prisma);
+
+    await expect(service.getHistory('wallet-1', 50, 1700000000000)).rejects.toThrow(
+      'beforeId is required when beforeTs is provided',
+    );
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('throws when beforeTs cannot produce a valid date', async () => {
+    const findMany = jest.fn();
+
+    const prisma = {
+      conversationMessage: { findMany },
+    } as unknown as PrismaService;
+
+    const service = new HistoryService(prisma);
+
+    await expect(
+      service.getHistory('wallet-1', 50, 8640000000000001, 'msg-20'),
+    ).rejects.toThrow('beforeTs must be a valid unix timestamp in milliseconds');
+    expect(findMany).not.toHaveBeenCalled();
+  });
 });

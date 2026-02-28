@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import type { HistoryResponse, MessageDto } from '../contracts/mvp';
 
@@ -17,20 +17,18 @@ export class HistoryService {
   ): Promise<HistoryResponse> {
     const normalizedLimit = this.normalizeLimit(limit);
     const take = normalizedLimit + 1;
-    const beforeDate = beforeTs !== undefined ? new Date(beforeTs) : undefined;
+    const beforeCursor = this.parseBeforeCursor(beforeTs, beforeId);
 
     const where =
-      beforeDate === undefined
+      beforeCursor === undefined
         ? { pubkey }
-        : beforeId === undefined
-          ? { pubkey, eventAt: { lt: beforeDate } }
-          : {
-              pubkey,
-              OR: [
-                { eventAt: { lt: beforeDate } },
-                { eventAt: beforeDate, id: { lt: beforeId } },
-              ],
-            };
+        : {
+            pubkey,
+            OR: [
+              { eventAt: { lt: beforeCursor.beforeDate } },
+              { eventAt: beforeCursor.beforeDate, id: { lt: beforeCursor.beforeId } },
+            ],
+          };
 
     const messagesDesc = await this.prisma.conversationMessage.findMany({
       where,
@@ -65,6 +63,30 @@ export class HistoryService {
     }
 
     return integerLimit;
+  }
+
+  private parseBeforeCursor(
+    beforeTs?: number,
+    beforeId?: string,
+  ): { beforeDate: Date; beforeId: string } | undefined {
+    if (beforeTs === undefined) {
+      return undefined;
+    }
+
+    if (beforeId === undefined) {
+      throw new BadRequestException('beforeId is required when beforeTs is provided');
+    }
+
+    if (!Number.isSafeInteger(beforeTs) || beforeTs <= 0) {
+      throw new BadRequestException('beforeTs must be a valid unix timestamp in milliseconds');
+    }
+
+    const beforeDate = new Date(beforeTs);
+    if (Number.isNaN(beforeDate.getTime())) {
+      throw new BadRequestException('beforeTs must be a valid unix timestamp in milliseconds');
+    }
+
+    return { beforeDate, beforeId };
   }
 
   private toMessageDto(message: {
