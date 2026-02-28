@@ -15,6 +15,7 @@ import { HistoryProjectionService } from '../history/history-projection.service'
 @Injectable()
 export class AgentService {
     private readonly logger = new Logger(AgentService.name);
+    private readonly persistenceChains = new Map<string, Promise<void>>();
 
     constructor(
         private readonly txAssembler: TxAssemblerService,
@@ -106,8 +107,8 @@ export class AgentService {
         const allSteps: StepEvent[] = [];
 
         try {
-            void this.persistLifecycleEvent(runId, pubkey, 'run_started', { intent });
-            void this.persistLifecycleEvent(runId, pubkey, 'message_user', { content: intent });
+            void this.enqueueLifecyclePersistence(runId, pubkey, 'run_started', { intent });
+            void this.enqueueLifecyclePersistence(runId, pubkey, 'message_user', { content: intent });
 
             // ─── Real Execution ────────────────────────────────────────
 
@@ -320,14 +321,14 @@ export class AgentService {
         this.runStream.emitComplete(runId, result);
 
         if (result.rejection) {
-            await this.persistLifecycleEvent(runId, state.pubkey, 'run_rejected', {
+            void this.enqueueLifecyclePersistence(runId, state.pubkey, 'run_rejected', {
                 reason: result.rejection.reason,
                 policyField: result.rejection.policyField,
                 intent: state.intent,
                 steps,
             });
         } else {
-            await this.persistLifecycleEvent(runId, state.pubkey, 'run_completed', {
+            void this.enqueueLifecyclePersistence(runId, state.pubkey, 'run_completed', {
                 intent: state.intent,
                 steps,
                 unsignedTx: result.unsignedTx,
@@ -341,7 +342,25 @@ export class AgentService {
     private async emitStep(runId: string, pubkey: string, allSteps: StepEvent[], step: StepEvent): Promise<void> {
         allSteps.push(step);
         this.runStream.emitStep(runId, step);
-        await this.persistLifecycleEvent(runId, pubkey, 'step_emitted', { step });
+        void this.enqueueLifecyclePersistence(runId, pubkey, 'step_emitted', { step });
+    }
+
+    private enqueueLifecyclePersistence(
+        runId: string,
+        pubkey: string,
+        type: string,
+        payload: Record<string, unknown>,
+    ): Promise<void> {
+        const previous = this.persistenceChains.get(runId) ?? Promise.resolve();
+        const next = previous.then(() => this.persistLifecycleEvent(runId, pubkey, type, payload));
+
+        this.persistenceChains.set(runId, next);
+
+        return next.finally(() => {
+            if (this.persistenceChains.get(runId) === next) {
+                this.persistenceChains.delete(runId);
+            }
+        });
     }
 
     private async persistLifecycleEvent(

@@ -561,6 +561,7 @@ describe('AgentService', () => {
     });
 
     await service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(historyEvents.append).toHaveBeenNthCalledWith(1, expect.objectContaining({ type: 'run_started' }));
     expect(historyEvents.append).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: 'message_user' }));
@@ -610,6 +611,7 @@ describe('AgentService', () => {
     });
 
     await service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(historyEvents.append).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run_rejected' }));
     expect(historyEvents.append).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'run_completed' }));
@@ -753,6 +755,91 @@ describe('AgentService', () => {
 
     releaseStartupPersistence?.();
     await runPromise;
+  });
+
+  it('queues lifecycle persistence per run while keeping stream emission non-blocking', async () => {
+    let releaseStartupPersistence: (() => void) | undefined;
+    const startupPersistenceGate = new Promise<void>((resolve) => {
+      releaseStartupPersistence = resolve;
+    });
+
+    const txAssembler = {
+      assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
+      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: true,
+        reason: 'Policy precheck passed.',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+    const historyEvents = createHistoryEventsMock();
+    const historyProjection = createHistoryProjectionMock();
+    const persistedTypes: string[] = [];
+
+    (historyEvents.append as jest.Mock).mockImplementation(async ({ runId, pubkey, type, payload }) => {
+      if (type === 'run_started') {
+        await startupPersistenceGate;
+      }
+
+      persistedTypes.push(type);
+
+      return {
+        runId,
+        pubkey,
+        seq: persistedTypes.length,
+        eventType: type,
+        createdAt: new Date('2026-02-28T12:00:00.000Z'),
+        payload,
+      };
+    });
+
+    const service = new (AgentService as any)(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      historyEvents,
+      historyProjection,
+    ) as AgentService;
+
+    const parseStep = {
+      type: 'step',
+      node: 'parse_intent',
+      status: 'success',
+      label: 'parsed',
+    };
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'swap',
+      amountLamports: 100000000,
+      protocol: 'jupiter',
+      steps: [parseStep],
+    });
+    (buildTransactionNode as jest.Mock).mockResolvedValue({
+      jupiterInstructions: { swapTransaction: 'jupiter-tx' },
+      steps: [],
+    });
+
+    const runPromise = service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    const runId = (runStream.createRun as jest.Mock).mock.calls[0][0];
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(runStream.emitStep).toHaveBeenCalledWith(runId, parseStep);
+    expect(persistedTypes).toEqual([]);
+
+    releaseStartupPersistence?.();
+    await runPromise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(persistedTypes[0]).toBe('run_started');
+    expect(persistedTypes[1]).toBe('message_user');
+    expect(persistedTypes).toContain('step_emitted');
+    expect(persistedTypes[persistedTypes.length - 1]).toBe('run_completed');
   });
 
   it('emits stream step before slow lifecycle persistence resolves', async () => {
