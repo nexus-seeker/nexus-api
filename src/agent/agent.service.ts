@@ -11,6 +11,7 @@ import { LlmService } from './llm/llm.service';
 import { SolanaService } from '../solana/solana.service';
 import { HistoryEventsService } from '../history/history-events.service';
 import { HistoryProjectionService } from '../history/history-projection.service';
+import type { Prisma } from '@prisma/client';
 
 @Injectable()
 export class AgentService {
@@ -374,14 +375,15 @@ export class AgentService {
         }
 
         try {
-            const event = await this.historyEvents.append({ runId, pubkey, type, payload });
+            const jsonPayload = payload as Prisma.InputJsonValue;
+            const event = await this.historyEvents.append({ runId, pubkey, type, payload: jsonPayload });
             await this.historyProjection.project({
                 runId: event.runId,
                 pubkey: event.pubkey,
                 type: event.eventType,
                 seq: event.seq,
                 eventAt: event.createdAt,
-                payload: event.payload,
+                payload: event.payload as Prisma.InputJsonValue,
             });
         } catch (error: any) {
             const message = error?.message || 'Unknown persistence error';
