@@ -4,6 +4,10 @@ import { PrismaClient } from '@prisma/client';
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
+    if (process.env.NODE_ENV === 'test' && !process.env.DATABASE_URL) {
+      return;
+    }
+
     await this.$connect();
   }
 
