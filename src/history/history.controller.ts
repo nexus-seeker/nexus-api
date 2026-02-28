@@ -16,24 +16,51 @@ export class HistoryController {
     @Query('pubkey') pubkey: string,
     @Query('limit') limit = '50',
     @Query('beforeTs') beforeTs?: string,
+    @Query('beforeId') beforeId?: string,
   ) {
     if (typeof pubkey !== 'string' || pubkey.trim().length === 0) {
       throw new BadRequestException('pubkey query parameter is required');
     }
 
-    const parsedLimit = Number.parseInt(limit, 10);
-    const normalizedLimit = Number.isNaN(parsedLimit)
-      ? DEFAULT_LIMIT
-      : Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, parsedLimit));
+    const parsedLimit = this.parseStrictInteger(limit, 'limit');
+    const normalizedLimit = Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, parsedLimit));
 
     let parsedBeforeTs: number | undefined;
     if (beforeTs !== undefined) {
-      parsedBeforeTs = Number.parseInt(beforeTs, 10);
-      if (Number.isNaN(parsedBeforeTs) || parsedBeforeTs <= 0) {
+      parsedBeforeTs = this.parseStrictInteger(
+        beforeTs,
+        'beforeTs must be a positive unix timestamp in milliseconds',
+      );
+      if (parsedBeforeTs <= 0) {
         throw new BadRequestException('beforeTs must be a positive unix timestamp in milliseconds');
       }
     }
 
-    return this.historyService.getHistory(pubkey, normalizedLimit, parsedBeforeTs);
+    let parsedBeforeId: string | undefined;
+    if (beforeId !== undefined) {
+      if (parsedBeforeTs === undefined) {
+        throw new BadRequestException('beforeId requires beforeTs');
+      }
+
+      parsedBeforeId = beforeId.trim();
+      if (parsedBeforeId.length === 0) {
+        throw new BadRequestException('beforeId must be a non-empty message id');
+      }
+    }
+
+    return this.historyService.getHistory(pubkey, normalizedLimit, parsedBeforeTs, parsedBeforeId);
+  }
+
+  private parseStrictInteger(value: string, errorMessage: string): number {
+    if (!/^\d+$/.test(value)) {
+      throw new BadRequestException(errorMessage);
+    }
+
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed)) {
+      throw new BadRequestException(errorMessage);
+    }
+
+    return parsed;
   }
 }

@@ -9,26 +9,47 @@ const MAX_LIMIT = 100;
 export class HistoryService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getHistory(pubkey: string, limit = DEFAULT_LIMIT, beforeTs?: number): Promise<HistoryResponse> {
+  async getHistory(
+    pubkey: string,
+    limit = DEFAULT_LIMIT,
+    beforeTs?: number,
+    beforeId?: string,
+  ): Promise<HistoryResponse> {
     const normalizedLimit = this.normalizeLimit(limit);
     const take = normalizedLimit + 1;
+    const beforeDate = beforeTs !== undefined ? new Date(beforeTs) : undefined;
+
+    const where =
+      beforeDate === undefined
+        ? { pubkey }
+        : beforeId === undefined
+          ? { pubkey, eventAt: { lt: beforeDate } }
+          : {
+              pubkey,
+              OR: [
+                { eventAt: { lt: beforeDate } },
+                { eventAt: beforeDate, id: { lt: beforeId } },
+              ],
+            };
 
     const messagesDesc = await this.prisma.conversationMessage.findMany({
-      where: {
-        pubkey,
-        ...(beforeTs !== undefined ? { eventAt: { lt: new Date(beforeTs) } } : {}),
-      },
+      where,
       orderBy: [{ eventAt: 'desc' }, { id: 'desc' }],
       take,
     });
 
     const hasMore = messagesDesc.length > normalizedLimit;
     const pageDesc = hasMore ? messagesDesc.slice(0, normalizedLimit) : messagesDesc;
-    const nextCursor = hasMore ? pageDesc[pageDesc.length - 1]?.eventAt.getTime() : undefined;
+    const nextCursor = hasMore
+      ? {
+          beforeTs: pageDesc[pageDesc.length - 1]?.eventAt.getTime(),
+          beforeId: pageDesc[pageDesc.length - 1]?.id,
+        }
+      : undefined;
 
     return {
       messages: pageDesc.reverse().map((message) => this.toMessageDto(message)),
-      ...(nextCursor !== undefined ? { nextCursor } : {}),
+      ...(nextCursor?.beforeTs !== undefined && nextCursor.beforeId !== undefined ? { nextCursor } : {}),
     };
   }
 
