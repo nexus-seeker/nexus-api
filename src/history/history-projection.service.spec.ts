@@ -5,8 +5,8 @@ describe('HistoryProjectionService', () => {
   const createService = () => {
     const prisma = {
       agentRun: {
-        findUnique: jest.fn(),
-        upsert: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        create: jest.fn(),
       },
       conversationMessage: {
         upsert: jest.fn(),
@@ -31,11 +31,10 @@ describe('HistoryProjectionService', () => {
       payload: { intent: 'Swap 0.1 SOL to USDC' },
     });
 
-    expect(prisma.agentRun.upsert).toHaveBeenCalledWith(
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { runId: 'run-1' },
-        update: expect.objectContaining({ status: 'started', lastEventSeq: 1 }),
-        create: expect.objectContaining({ runId: 'run-1', pubkey: 'pk', status: 'started' }),
+        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 1 } }),
+        data: expect.objectContaining({ status: 'started', intent: 'Swap 0.1 SOL to USDC', lastEventSeq: 1 }),
       }),
     );
   });
@@ -52,10 +51,10 @@ describe('HistoryProjectionService', () => {
       payload: { content: 'Swap 0.1 SOL to USDC' },
     });
 
-    expect(prisma.agentRun.upsert).toHaveBeenCalledWith(
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { runId: 'run-1' },
-        create: expect.objectContaining({ runId: 'run-1', status: 'started', lastEventSeq: 2 }),
+        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 2 } }),
+        data: expect.objectContaining({ lastEventSeq: 2 }),
       }),
     );
 
@@ -91,10 +90,10 @@ describe('HistoryProjectionService', () => {
       payload: { step: { node: 'assemble_tx', status: 'success' } },
     });
 
-    expect(prisma.agentRun.upsert).toHaveBeenCalledWith(
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { runId: 'run-1' },
-        update: expect.objectContaining({
+        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 3 } }),
+        data: expect.objectContaining({
           lastEventSeq: 3,
           latestStep: expect.objectContaining({ node: 'assemble_tx', status: 'success' }),
         }),
@@ -114,10 +113,10 @@ describe('HistoryProjectionService', () => {
       payload: { response: 'Done. Ready to sign.' },
     });
 
-    expect(prisma.agentRun.upsert).toHaveBeenCalledWith(
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { runId: 'run-1' },
-        update: expect.objectContaining({
+        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 4 } }),
+        data: expect.objectContaining({
           status: 'completed',
           lastEventSeq: 4,
           completedAt: new Date('2026-02-28T12:03:00.000Z'),
@@ -150,10 +149,10 @@ describe('HistoryProjectionService', () => {
       payload: { reason: 'Rejected by policy checks' },
     });
 
-    expect(prisma.agentRun.upsert).toHaveBeenCalledWith(
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { runId: 'run-1' },
-        update: expect.objectContaining({ status: 'rejected', lastEventSeq: 5 }),
+        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 5 } }),
+        data: expect.objectContaining({ status: 'rejected', rejectedReason: 'Rejected by policy checks', lastEventSeq: 5 }),
       }),
     );
 
@@ -172,7 +171,11 @@ describe('HistoryProjectionService', () => {
 
   it('does not regress run snapshot for out-of-order events', async () => {
     const { prisma, service } = createService();
-    prisma.agentRun.findUnique = jest.fn().mockResolvedValue({ lastEventSeq: 6 });
+    prisma.agentRun.updateMany = jest
+      .fn()
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 0 });
+    prisma.agentRun.create = jest.fn().mockRejectedValueOnce({ code: 'P2002' });
 
     await service.project({
       runId: 'run-1',
@@ -183,7 +186,8 @@ describe('HistoryProjectionService', () => {
       payload: { response: 'Done. Ready to sign.' },
     });
 
-    expect(prisma.agentRun.upsert).not.toHaveBeenCalled();
+    expect(prisma.agentRun.create).toHaveBeenCalledTimes(1);
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledTimes(2);
     expect(prisma.conversationMessage.upsert).toHaveBeenCalledTimes(1);
   });
 
@@ -208,6 +212,60 @@ describe('HistoryProjectionService', () => {
           },
         },
         update: {},
+      }),
+    );
+  });
+
+  it('uses atomic conditional updates to prevent stale snapshot regressions', async () => {
+    const { prisma, service } = createService();
+
+    await service.project({
+      runId: 'run-atomic',
+      pubkey: 'pk',
+      type: 'run_completed',
+      seq: 9,
+      eventAt: new Date('2026-02-28T12:10:00.000Z'),
+      payload: { response: 'All done' },
+    });
+
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ runId: 'run-atomic', lastEventSeq: { lt: 9 } }),
+        data: expect.objectContaining({
+          status: 'completed',
+          completedAt: new Date('2026-02-28T12:10:00.000Z'),
+          lastEventSeq: 9,
+        }),
+      }),
+    );
+  });
+
+  it('handles create races by retrying conditional update after unique conflicts', async () => {
+    const { prisma, service } = createService();
+    prisma.agentRun.updateMany = jest
+      .fn()
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    prisma.agentRun.create = jest
+      .fn()
+      .mockRejectedValueOnce({ code: 'P2002' })
+      .mockResolvedValue(undefined);
+
+    await service.project({
+      runId: 'run-race',
+      pubkey: 'pk',
+      type: 'run_started',
+      seq: 3,
+      eventAt: new Date('2026-02-28T12:11:00.000Z'),
+      payload: { intent: 'race' },
+    });
+
+    expect(prisma.agentRun.create).toHaveBeenCalledTimes(1);
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.agentRun.updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({ runId: 'run-race', lastEventSeq: { lt: 3 } }),
       }),
     );
   });

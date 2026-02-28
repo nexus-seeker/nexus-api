@@ -64,15 +64,6 @@ export class HistoryProjectionService {
       rejectedReason?: string;
     },
   ): Promise<void> {
-    const existingRun = await this.prisma.agentRun.findUnique({
-      where: { runId: input.runId },
-      select: { lastEventSeq: true },
-    });
-
-    if (existingRun && input.seq <= existingRun.lastEventSeq) {
-      return;
-    }
-
     const createData: Prisma.AgentRunCreateInput = {
       runId: input.runId,
       pubkey: input.pubkey,
@@ -120,11 +111,41 @@ export class HistoryProjectionService {
       updateData.rejectedReason = patch.rejectedReason;
     }
 
-    await this.prisma.agentRun.upsert({
-      where: { runId: input.runId },
-      create: createData,
-      update: updateData,
+    const where = {
+      runId: input.runId,
+      lastEventSeq: { lt: input.seq },
+    };
+
+    const updated = await this.prisma.agentRun.updateMany({
+      where,
+      data: updateData,
     });
+
+    if (updated.count > 0) {
+      return;
+    }
+
+    try {
+      await this.prisma.agentRun.create({ data: createData });
+      return;
+    } catch (error) {
+      if (!this.isUniqueConstraintError(error)) {
+        throw error;
+      }
+    }
+
+    await this.prisma.agentRun.updateMany({
+      where,
+      data: updateData,
+    });
+  }
+
+  private isUniqueConstraintError(error: unknown): error is { code: string } {
+    if (typeof error !== 'object' || error === null || !('code' in error)) {
+      return false;
+    }
+
+    return (error as { code?: unknown }).code === 'P2002';
   }
 
   private async createMessage(
