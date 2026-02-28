@@ -22,13 +22,15 @@ export class HistoryService {
     const where =
       beforeCursor === undefined
         ? { pubkey }
-        : {
-            pubkey,
-            OR: [
-              { eventAt: { lt: beforeCursor.beforeDate } },
-              { eventAt: beforeCursor.beforeDate, id: { lt: beforeCursor.beforeId } },
-            ],
-          };
+        : beforeCursor.beforeId === undefined
+          ? { pubkey, eventAt: { lte: beforeCursor.beforeDate } }
+          : {
+              pubkey,
+              OR: [
+                { eventAt: { lt: beforeCursor.beforeDate } },
+                { eventAt: beforeCursor.beforeDate, id: { lt: beforeCursor.beforeId } },
+              ],
+            };
 
     const messagesDesc = await this.prisma.conversationMessage.findMany({
       where,
@@ -68,13 +70,9 @@ export class HistoryService {
   private parseBeforeCursor(
     beforeTs?: number,
     beforeId?: string,
-  ): { beforeDate: Date; beforeId: string } | undefined {
+  ): { beforeDate: Date; beforeId?: string } | undefined {
     if (beforeTs === undefined) {
       return undefined;
-    }
-
-    if (beforeId === undefined) {
-      throw new BadRequestException('beforeId is required when beforeTs is provided');
     }
 
     if (!Number.isSafeInteger(beforeTs) || beforeTs <= 0) {

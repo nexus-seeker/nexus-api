@@ -67,8 +67,8 @@ describe('HistoryService', () => {
     );
   });
 
-  it('throws when beforeTs is provided without beforeId', async () => {
-    const findMany = jest.fn();
+  it('uses inclusive timestamp boundary when only beforeTs is provided', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
 
     const prisma = {
       conversationMessage: { findMany },
@@ -76,10 +76,16 @@ describe('HistoryService', () => {
 
     const service = new HistoryService(prisma);
 
-    await expect(service.getHistory('wallet-1', 50, 1700000000000)).rejects.toThrow(
-      'beforeId is required when beforeTs is provided',
+    await service.getHistory('wallet-1', 50, 1700000000000);
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          pubkey: 'wallet-1',
+          eventAt: { lte: new Date(1700000000000) },
+        },
+      }),
     );
-    expect(findMany).not.toHaveBeenCalled();
   });
 
   it('throws when beforeTs cannot produce a valid date', async () => {

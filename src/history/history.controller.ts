@@ -52,8 +52,6 @@ export class HistoryController {
       if (parsedBeforeId.length === 0) {
         throw new BadRequestException('beforeId must be a non-empty message id');
       }
-    } else if (parsedBeforeTs !== undefined) {
-      throw new BadRequestException('beforeTs requires beforeId');
     }
 
     return this.historyService.getHistory(pubkey, normalizedLimit, parsedBeforeTs, parsedBeforeId);

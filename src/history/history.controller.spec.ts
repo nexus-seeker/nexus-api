@@ -42,16 +42,15 @@ describe('HistoryController', () => {
     expect(historyService.getHistory).toHaveBeenCalledWith(TEST_PUBKEY, 10, 1700000000000, 'msg-9');
   });
 
-  it('throws when beforeTs is provided without beforeId', async () => {
+  it('passes beforeTs-only cursor to service for spec compatibility', async () => {
     const historyService = {
-      getHistory: jest.fn(),
+      getHistory: jest.fn().mockResolvedValue({ messages: [] }),
     };
     const controller = new HistoryController(historyService as any);
 
-    await expect(controller.getHistory(TEST_PUBKEY, '10', '1700000000000')).rejects.toThrow(
-      BadRequestException,
-    );
-    expect(historyService.getHistory).not.toHaveBeenCalled();
+    await controller.getHistory(TEST_PUBKEY, '10', '1700000000000');
+
+    expect(historyService.getHistory).toHaveBeenCalledWith(TEST_PUBKEY, 10, 1700000000000, undefined);
   });
 
   it('defaults limit to 50 when omitted', async () => {
