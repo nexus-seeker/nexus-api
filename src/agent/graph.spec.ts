@@ -242,8 +242,8 @@ describe('policyRouter', () => {
     };
   }
 
-  it('routes to build_transaction only for jupiter protocol', () => {
-    expect(policyRouter(makeState({ protocol: 'jupiter' }))).toBe('build_transaction');
+  it('routes to select_route only for jupiter protocol', () => {
+    expect(policyRouter(makeState({ protocol: 'jupiter' }))).toBe('select_route');
   });
 
   it('ends route for spl_transfer protocol', () => {
