@@ -7,6 +7,7 @@ export interface ProjectRunEventInput {
   pubkey: string;
   type: string;
   seq: number;
+  eventAt: Date;
   payload: Prisma.InputJsonValue;
 }
 
@@ -23,6 +24,7 @@ export class HistoryProjectionService {
         });
         return;
       case 'message_user':
+        await this.upsertRun(input, {});
         await this.createMessage(input, 'user', this.getStringField(input.payload, 'content'));
         return;
       case 'step_emitted':
@@ -33,7 +35,7 @@ export class HistoryProjectionService {
       case 'run_completed':
         await this.upsertRun(input, {
           status: 'completed',
-          completedAt: new Date(),
+          completedAt: input.eventAt,
           intent: this.getStringField(input.payload, 'intent'),
           latestStep: this.getStepPayload(input.payload),
         });
@@ -62,6 +64,15 @@ export class HistoryProjectionService {
       rejectedReason?: string;
     },
   ): Promise<void> {
+    const existingRun = await this.prisma.agentRun.findUnique({
+      where: { runId: input.runId },
+      select: { lastEventSeq: true },
+    });
+
+    if (existingRun && input.seq <= existingRun.lastEventSeq) {
+      return;
+    }
+
     const createData: Prisma.AgentRunCreateInput = {
       runId: input.runId,
       pubkey: input.pubkey,
@@ -125,15 +136,23 @@ export class HistoryProjectionService {
       return;
     }
 
-    await this.prisma.conversationMessage.create({
-      data: {
+    await this.prisma.conversationMessage.upsert({
+      where: {
+        runId_seq: {
+          runId: input.runId,
+          seq: input.seq,
+        },
+      },
+      create: {
         runId: input.runId,
         pubkey: input.pubkey,
         seq: input.seq,
         role,
         content,
         payload: input.payload,
+        eventAt: input.eventAt,
       },
+      update: {},
     });
   }
 

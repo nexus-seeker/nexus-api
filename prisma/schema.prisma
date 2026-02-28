@@ -45,10 +45,12 @@ model ConversationMessage {
   role      String
   content   String
   payload   Json?
+  eventAt   DateTime
   createdAt DateTime @default(now())
   agentRun  AgentRun @relation(fields: [runId], references: [runId], onDelete: Cascade)
 
   @@unique([runId, seq])
+  @@index([pubkey, eventAt])
   @@index([pubkey, createdAt])
   @@map("conversation_messages")
 }
