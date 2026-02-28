@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model RunEvent {
+  id        String   @id @default(cuid())
+  runId     String
+  seq       Int
+  pubkey    String
+  eventType String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@unique([runId, seq])
+  @@map("run_events")
+}
+
+model AgentRun {
+  runId          String                @id
+  pubkey         String
+  status         String
+  intent         String?
+  latestStep     Json?
+  completedAt    DateTime?
+  rejectedReason String?
+  lastEventSeq   Int                   @default(0)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  messages       ConversationMessage[]
+
+  @@index([pubkey, updatedAt])
+  @@map("agent_runs")
+}
+
+model ConversationMessage {
+  id        String   @id @default(cuid())
+  runId     String
+  pubkey    String
+  seq       Int
+  role      String
+  content   String
+  payload   Json?
+  eventAt   DateTime
+  createdAt DateTime @default(now())
+  agentRun  AgentRun @relation(fields: [runId], references: [runId], onDelete: Cascade)
+
+  @@unique([runId, seq])
+  @@index([pubkey, eventAt])
+  @@index([pubkey, createdAt])
+  @@map("conversation_messages")
+}
+
+model ReceiptCache {
+  address        String   @id
+  ownerPubkey    String
+  agentProfile   String
+  seekerId       String
+  intentHash     Json
+  protocol       String
+  amountLamports BigInt
+  txSignature    String
+  status         String
+  timestamp      Int
+  bump           Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([ownerPubkey, timestamp])
+  @@index([ownerPubkey, updatedAt])
+  @@map("receipts_cache")
+}

@@ -56,6 +56,25 @@ export interface ExecuteResponse {
   };
 }
 
+export interface MessageDto {
+  id: string;
+  role: string;
+  content: string;
+  runId: string;
+  steps?: unknown[];
+  rejection?: {
+    reason: string;
+    policyField: string;
+  };
+  timestamp: number;
+}
+
+export interface HistoryResponse {
+  messages: MessageDto[];
+  nextCursor?: number;
+  nextCursorId?: string;
+}
+
 export type SSEMessage =
   | { type: 'step'; step: StepEvent }
   | { type: 'heartbeat' }
