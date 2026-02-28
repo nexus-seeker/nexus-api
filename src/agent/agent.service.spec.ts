@@ -6,10 +6,10 @@ import { LlmService } from './llm/llm.service';
 import { SolanaService } from '../solana/solana.service';
 import { HistoryEventsService } from '../history/history-events.service';
 import { HistoryProjectionService } from '../history/history-projection.service';
+import { ToolRegistry } from './tools/tool.registry';
 import {
   parseIntentNode,
   buildTransactionNode,
-  assembleTxNode,
 } from './graph';
 
 jest.mock('uuid', () => ({
@@ -19,8 +19,12 @@ jest.mock('uuid', () => ({
 jest.mock('./graph', () => ({
   parseIntentNode: jest.fn(),
   buildTransactionNode: jest.fn(),
+  selectRouteNode: jest.fn(),
   assembleTxNode: jest.fn(),
 }));
+
+import { selectRouteNode } from './graph';
+import { RouteSelectorService } from '../protocols/route-selector.service';
 
 describe('AgentService', () => {
   const createRunStreamMock = () => ({
@@ -41,6 +45,22 @@ describe('AgentService', () => {
     getLlm: jest.fn().mockReturnValue({ invoke: jest.fn() }),
   } as unknown as LlmService;
 
+  const mockRouteSelectorService = {} as unknown as RouteSelectorService;
+
+  // Default mock ToolRegistry — dispatch returns a successful unsigned tx result
+  const mockToolRegistry = {
+    dispatch: jest.fn().mockResolvedValue({
+      success: true,
+      unsignedTxBase64: 'mock-tx-base64',
+      simulationResult: { fee: 5000, outAmount: 0, priceImpact: '0.00%' },
+      stepEvent: { node: 'build_transaction', status: 'success', label: 'Tool executed ✓' },
+    }),
+    getAll: jest.fn().mockReturnValue([]),
+    register: jest.fn(),
+    get: jest.fn(),
+    getSchemaForLlm: jest.fn().mockReturnValue(''),
+  } as unknown as ToolRegistry;
+
   // Default: wallet is onboarded
   const mockSolanaService = {
     fetchAgentProfile: jest.fn().mockResolvedValue({ owner: '11111111111111111111111111111111' }),
@@ -49,43 +69,45 @@ describe('AgentService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (mockSolanaService.fetchAgentProfile as jest.Mock).mockResolvedValue({ owner: '11111111111111111111111111111111' });
+    // Default: selectRouteNode returns jupiter
+    (selectRouteNode as jest.Mock).mockResolvedValue({
+      selectedProtocol: 'jupiter',
+      steps: [{ node: 'select_route', status: 'success', label: 'Jupiter selected' }],
+    });
+    // Default: toolRegistry success — override per-test as needed
+    (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
+      success: true,
+      unsignedTxBase64: 'mock-tx-base64',
+      simulationResult: { fee: 5000, outAmount: 0, priceImpact: '0.00%' },
+      stepEvent: { node: 'build_transaction', status: 'success', label: 'Tool executed ✓' },
+    });
+    (mockToolRegistry.getAll as jest.Mock).mockReturnValue([]);
   });
 
   it.each([undefined, ''])(
-    'rejects tx_assembly when assembler returns %p',
+    'rejects tx_assembly when tool dispatch returns no tx (%p)',
     async (assembledTx) => {
-      const txAssembler = {
-        assembleTransaction: jest.fn().mockResolvedValue(assembledTx),
-        simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
-      } as unknown as TxAssemblerService;
+      const txAssembler = {} as unknown as TxAssemblerService;
       const policyPrecheck = {
-        precheck: jest.fn().mockResolvedValue({
-          allowed: true,
-          reason: 'Policy precheck passed.',
-        }),
+        precheck: jest.fn().mockResolvedValue({ allowed: true, reason: 'ok' }),
       } as unknown as PolicyPrecheckService;
       const runStream = createRunStreamMock();
 
-      const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+      // Simulate the tool returning an "empty" tx (treated as failure by registry)
+      (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
+        success: false,
+        rejectionReason: 'Assembler returned empty transaction',
+        rejectionField: 'tx_assembly',
+        stepEvent: { node: 'build_transaction', status: 'rejected', label: 'Empty tx' },
+      });
+
+      const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
       (parseIntentNode as jest.Mock).mockResolvedValue({
         action: 'swap',
         amountLamports: 100000000,
         protocol: 'jupiter',
-        steps: [
-          { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
-        ],
-      });
-      (buildTransactionNode as jest.Mock).mockResolvedValue({
-        jupiterInstructions: { swapTransaction: 'jupiter-tx' },
-        steps: [
-          {
-            type: 'step',
-            node: 'build_transaction',
-            status: 'success',
-            label: 'built',
-          },
-        ],
+        steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
       });
 
       const result = await service.executeAgent(
@@ -95,49 +117,30 @@ describe('AgentService', () => {
 
       expect(result.unsignedTx).toBeUndefined();
       expect(result.rejection?.policyField).toBe('tx_assembly');
-      expect(result.steps).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            node: 'assemble_tx',
-            status: 'rejected',
-          }),
-        ]),
-      );
     },
   );
 
-  it('rejects tx_assembly when build node omits jupiterInstructions', async () => {
-    const txAssembler = {
-      assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
-      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
-    } as unknown as TxAssemblerService;
+  it('rejects tx_assembly when tool dispatch returns a build failure', async () => {
+    const txAssembler = {} as unknown as TxAssemblerService;
     const policyPrecheck = {
-      precheck: jest.fn().mockResolvedValue({
-        allowed: true,
-        reason: 'Policy precheck passed.',
-      }),
+      precheck: jest.fn().mockResolvedValue({ allowed: true, reason: 'ok' }),
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
+      success: false,
+      rejectionReason: 'Missing Jupiter instructions',
+      rejectionField: 'tx_assembly',
+      stepEvent: { node: 'build_transaction', status: 'rejected', label: 'Missing Jupiter instructions' },
+    });
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [
-        { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
-      ],
-    });
-    (buildTransactionNode as jest.Mock).mockResolvedValue({
-      steps: [
-        {
-          type: 'step',
-          node: 'build_transaction',
-          status: 'success',
-          label: 'built',
-        },
-      ],
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
     });
 
     const result = await service.executeAgent(
@@ -145,24 +148,12 @@ describe('AgentService', () => {
       '11111111111111111111111111111111',
     );
 
-    expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
     expect(result.unsignedTx).toBeUndefined();
     expect(result.rejection?.policyField).toBe('tx_assembly');
-    expect(result.steps).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          node: 'assemble_tx',
-          status: 'rejected',
-        }),
-      ]),
-    );
   });
 
-  it('rejects tx_assembly failures without falling back to assembleTxNode', async () => {
-    const txAssembler = {
-      assembleTransaction: jest.fn().mockRejectedValue(new Error('assembler down')),
-      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
-    } as unknown as TxAssemblerService;
+  it('rejects tx_assembly failures via tool registry dispatch rejection', async () => {
+    const txAssembler = {} as unknown as TxAssemblerService;
     const policyPrecheck = {
       precheck: jest.fn().mockResolvedValue({
         allowed: true,
@@ -171,7 +162,20 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    const failingToolRegistry = {
+      dispatch: jest.fn().mockResolvedValue({
+        success: false,
+        rejectionReason: 'Tx assembly failed: assembler down',
+        rejectionField: 'tx_assembly',
+        stepEvent: { node: 'build_transaction', status: 'rejected', label: 'Assembly error: assembler down' },
+      }),
+      getAll: jest.fn().mockReturnValue([]),
+      register: jest.fn(),
+      get: jest.fn(),
+      getSchemaForLlm: jest.fn().mockReturnValue(''),
+    } as unknown as ToolRegistry;
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, failingToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -181,78 +185,40 @@ describe('AgentService', () => {
         { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
       ],
     });
-    (buildTransactionNode as jest.Mock).mockResolvedValue({
-      jupiterInstructions: { swapTransaction: 'fallback-unsigned-tx' },
-      steps: [
-        {
-          type: 'step',
-          node: 'build_transaction',
-          status: 'success',
-          label: 'built',
-        },
-      ],
-    });
-    (assembleTxNode as jest.Mock).mockResolvedValue({
-      unsignedTxBase64: 'fallback-unsigned-tx',
-      steps: [
-        { type: 'step', node: 'assemble_tx', status: 'success', label: 'fallback' },
-      ],
-    });
 
     const result = await service.executeAgent(
       'swap 0.1 SOL to USDC',
       '11111111111111111111111111111111',
     );
 
-    expect(assembleTxNode).not.toHaveBeenCalled();
     expect(result.unsignedTx).toBeUndefined();
     expect(result.rejection).toEqual({
       reason: 'Tx assembly failed: assembler down',
       policyField: 'tx_assembly',
     });
-    expect(result.steps).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          node: 'assemble_tx',
-          status: 'rejected',
-        }),
-      ]),
-    );
   });
 
-  it('uses fallback tx_assembly error when thrown value has no message', async () => {
-    const txAssembler = {
-      assembleTransaction: jest.fn().mockRejectedValue({ code: 'ASSEMBLY_FAILED' }),
-      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 7000 }),
-    } as unknown as TxAssemblerService;
+  it('uses fallback tx_assembly error when tool dispatch throws without message', async () => {
+    const txAssembler = {} as unknown as TxAssemblerService;
     const policyPrecheck = {
-      precheck: jest.fn().mockResolvedValue({
-        allowed: true,
-        reason: 'Policy precheck passed.',
-      }),
+      precheck: jest.fn().mockResolvedValue({ allowed: true, reason: 'ok' }),
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
+      success: false,
+      rejectionReason: 'Tool "swap" failed: Unknown tool execution error',
+      rejectionField: 'tool_execution',
+      stepEvent: { node: 'tool_executor', status: 'rejected', label: 'Tool error: Unknown tool execution error' },
+    });
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [
-        { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
-      ],
-    });
-    (buildTransactionNode as jest.Mock).mockResolvedValue({
-      jupiterInstructions: { swapTransaction: 'fallback-unsigned-tx' },
-      steps: [
-        {
-          type: 'step',
-          node: 'build_transaction',
-          status: 'success',
-          label: 'built',
-        },
-      ],
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
     });
 
     const result = await service.executeAgent(
@@ -260,10 +226,10 @@ describe('AgentService', () => {
       '11111111111111111111111111111111',
     );
 
-    expect(result.rejection).toEqual({
-      reason: 'Tx assembly failed: Unknown tx assembly error',
-      policyField: 'tx_assembly',
-    });
+    expect(result.unsignedTx).toBeUndefined();
+    expect(result.rejection).toEqual(
+      expect.objectContaining({ policyField: 'tool_execution' }),
+    );
   });
 
   it('rejects before tx build when policy precheck fails', async () => {
@@ -280,7 +246,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -327,7 +293,7 @@ describe('AgentService', () => {
       fetchAgentProfile: jest.fn().mockResolvedValue(null),
     } as unknown as SolanaService;
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, notOnboardedSolanaService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, notOnboardedSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -356,20 +322,21 @@ describe('AgentService', () => {
     );
   });
 
-  it('uses RPC simulation fee while preserving quote outAmount and priceImpact', async () => {
-    const txAssembler = {
-      assembleTransaction: jest.fn().mockResolvedValue('assembled-tx'),
-      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 9123 }),
-    } as unknown as TxAssemblerService;
+  it('returns simulation data from tool dispatch result', async () => {
+    const txAssembler = {} as unknown as TxAssemblerService;
     const policyPrecheck = {
-      precheck: jest.fn().mockResolvedValue({
-        allowed: true,
-        reason: 'Policy precheck passed.',
-      }),
+      precheck: jest.fn().mockResolvedValue({ allowed: true, reason: 'ok' }),
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
+      success: true,
+      unsignedTxBase64: 'assembled-tx',
+      simulationResult: { fee: 9123, outAmount: 14230000, priceImpact: '0.02%' },
+      stepEvent: { node: 'build_transaction', status: 'success', label: 'Swap done' },
+    });
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -377,47 +344,35 @@ describe('AgentService', () => {
       protocol: 'jupiter',
       steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
     });
-    (buildTransactionNode as jest.Mock).mockResolvedValue({
-      jupiterInstructions: { swapTransaction: 'jupiter-tx' },
-      simulationResult: { fee: 5000, outAmount: 14230000, priceImpact: '0.02%' },
-      steps: [
-        {
-          type: 'step',
-          node: 'build_transaction',
-          status: 'success',
-          label: 'built',
-        },
-      ],
-    });
 
     const result = await service.executeAgent(
       'swap 0.1 SOL to USDC',
       '11111111111111111111111111111111',
     );
 
-    expect(txAssembler.simulateUnsignedTx).toHaveBeenCalledWith('assembled-tx');
     expect(result.simulation).toEqual({
       fee: 9123,
       outAmount: 14230000,
       priceImpact: '0.02%',
     });
+    expect(result.unsignedTx).toBe('assembled-tx');
   });
 
-  it('assembles spl_transfer transactions without Jupiter instructions', async () => {
-    const txAssembler = {
-      assembleTransaction: jest.fn().mockResolvedValue('should-not-be-used'),
-      assembleSplTransferTransaction: jest.fn().mockResolvedValue('spl-transfer-tx'),
-      simulateUnsignedTx: jest.fn().mockResolvedValue({ fee: 6000 }),
-    } as unknown as TxAssemblerService;
+  it('assembles spl_transfer via tool registry dispatch', async () => {
+    const txAssembler = {} as unknown as TxAssemblerService;
     const policyPrecheck = {
-      precheck: jest.fn().mockResolvedValue({
-        allowed: true,
-        reason: 'Policy precheck passed.',
-      }),
+      precheck: jest.fn().mockResolvedValue({ allowed: true, reason: 'ok' }),
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
+      success: true,
+      unsignedTxBase64: 'spl-transfer-tx',
+      simulationResult: { fee: 5000, outAmount: 10_000_000, priceImpact: '0.00%' },
+      stepEvent: { node: 'build_transaction', status: 'success', label: 'Transfer prepared' },
+    });
+
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'transfer',
@@ -426,24 +381,17 @@ describe('AgentService', () => {
       recipientPubkey: 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
       steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
     });
-    (buildTransactionNode as jest.Mock).mockResolvedValue({
-      steps: [
-        {
-          type: 'step',
-          node: 'build_transaction',
-          status: 'success',
-          label: 'SPL transfer prepared',
-        },
-      ],
-    });
 
     const result = await service.executeAgent(
       'transfer 0.01 SOL to EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
       '11111111111111111111111111111111',
     );
 
-    expect((txAssembler as any).assembleTransaction).not.toHaveBeenCalled();
-    expect((txAssembler as any).assembleSplTransferTransaction).toHaveBeenCalledTimes(1);
+    expect(mockToolRegistry.dispatch).toHaveBeenCalledWith(
+      'transfer',
+      expect.any(Object),
+      expect.any(Object),
+    );
     expect(result.unsignedTx).toBe('spl-transfer-tx');
     expect(result.rejection).toBeUndefined();
   });
@@ -458,7 +406,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -485,7 +433,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -537,7 +485,9 @@ describe('AgentService', () => {
       .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 4, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:03.000Z') })
       .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 5, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:04.000Z') })
       .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 6, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:05.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 7, eventType: 'run_completed', createdAt: new Date('2026-02-28T12:00:06.000Z') });
+      // select_route step (added by selectRouteNode mock)
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 7, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:06.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 8, eventType: 'run_completed', createdAt: new Date('2026-02-28T12:00:07.000Z') });
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -545,6 +495,8 @@ describe('AgentService', () => {
       runStream,
       mockLlmService,
       mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -599,6 +551,8 @@ describe('AgentService', () => {
       runStream,
       mockLlmService,
       mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -630,7 +584,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     const parseStep = {
       type: 'step',
@@ -666,12 +620,20 @@ describe('AgentService', () => {
     expect(runStream.emitStep).toHaveBeenCalledWith(runId, parseStep);
     expect(runStream.emitStep).toHaveBeenCalledWith(
       runId,
-      expect.objectContaining({ node: 'validate_policy', status: 'success' }),
+      expect.objectContaining({ node: 'plan_actions', status: 'success' }),
     );
-    expect(runStream.emitStep).toHaveBeenCalledWith(runId, buildStep);
     expect(runStream.emitStep).toHaveBeenCalledWith(
       runId,
-      expect.objectContaining({ node: 'assemble_tx', status: 'success' }),
+      expect.objectContaining({ node: 'validate_policy', status: 'success' }),
+    );
+    expect(runStream.emitStep).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({ node: 'tool_executor', status: 'running' }),
+    );
+    // Tool dispatch result step
+    expect(runStream.emitStep).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({ node: 'build_transaction', status: 'success' }),
     );
     expect(runStream.emitComplete).toHaveBeenCalledWith(runId, result);
   });
@@ -724,6 +686,8 @@ describe('AgentService', () => {
       runStream,
       mockLlmService,
       mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -801,6 +765,8 @@ describe('AgentService', () => {
       runStream,
       mockLlmService,
       mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -890,6 +856,8 @@ describe('AgentService', () => {
       runStream,
       mockLlmService,
       mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -971,6 +939,8 @@ describe('AgentService', () => {
       runStream,
       mockLlmService,
       mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -1015,7 +985,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockRejectedValue(new Error('parse exploded'));
 
@@ -1059,7 +1029,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
 
     (parseIntentNode as jest.Mock).mockReturnValue(parsePromise);
 

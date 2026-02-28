@@ -15,14 +15,28 @@ const MINT_MAP: Record<string, string> = {
   BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
 };
 
-type ParsedIntentPayload = {
-  action: 'swap' | 'transfer';
-  protocol: 'jupiter' | 'spl_transfer';
-  amountSOL: number;
-  tokenIn?: string;
-  tokenOut?: string;
-  recipientPubkey?: string;
-};
+type ParsedIntentPayload =
+  | {
+    action: 'swap' | 'transfer' | 'stake';
+    protocol: 'jupiter' | 'spl_transfer' | 'marinade';
+    amountSOL: number;
+    tokenIn?: string;
+    tokenOut?: string;
+    recipientPubkey?: string;
+  }
+  | {
+    action: 'multi_send';
+    protocol: 'multi_send';
+    amountSOL: number; // total
+    recipients: Array<{ pubkey: string; amountSOL: number }>;
+  }
+  | {
+    action: 'analyze';
+    protocol: 'analyze';
+    amountSOL: 0;
+    analysisType: 'wallet' | 'token';
+    subject: string; // wallet pubkey or token symbol/mint
+  };
 
 function isParsedIntentPayload(value: unknown): value is ParsedIntentPayload {
   if (!value || typeof value !== 'object') {
@@ -31,10 +45,40 @@ function isParsedIntentPayload(value: unknown): value is ParsedIntentPayload {
 
   const payload = value as Record<string, unknown>;
 
-  const hasValidAction =
-    payload.action === 'swap' || payload.action === 'transfer';
-  const hasValidProtocol =
-    payload.protocol === 'jupiter' || payload.protocol === 'spl_transfer';
+  const validActions = ['swap', 'transfer', 'multi_send', 'stake', 'analyze'];
+  if (!validActions.includes(payload.action as string)) {
+    return false;
+  }
+
+  // Analysis branch — no amount required
+  if (payload.action === 'analyze') {
+    return (
+      (payload.analysisType === 'wallet' || payload.analysisType === 'token') &&
+      typeof payload.subject === 'string' &&
+      payload.subject.length > 0
+    );
+  }
+
+  // Multi-send branch
+  if (payload.action === 'multi_send') {
+    if (!Array.isArray(payload.recipients) || payload.recipients.length === 0) {
+      return false;
+    }
+    return payload.recipients.every((r: unknown) => {
+      if (!r || typeof r !== 'object') return false;
+      const entry = r as Record<string, unknown>;
+      return (
+        typeof entry.pubkey === 'string' &&
+        typeof entry.amountSOL === 'number' &&
+        entry.amountSOL > 0
+      );
+    });
+  }
+
+  // swap / transfer / stake
+  const hasValidProtocol = ['jupiter', 'spl_transfer', 'marinade'].includes(
+    payload.protocol as string,
+  );
   const hasValidAmount =
     typeof payload.amountSOL === 'number' &&
     Number.isFinite(payload.amountSOL) &&
@@ -53,7 +97,6 @@ function isParsedIntentPayload(value: unknown): value is ParsedIntentPayload {
     typeof payload.recipientPubkey === 'string';
 
   return (
-    hasValidAction &&
     hasValidProtocol &&
     hasValidAmount &&
     hasValidTokenIn &&
@@ -95,6 +138,7 @@ function extractPubkeyFromIntent(intent: string): string | undefined {
 export async function parseIntentNode(
   state: AgentState,
   llm: LlmClient,
+  memoryContext?: string,
 ): Promise<Partial<AgentState>> {
   const step: StepEvent = {
     node: 'parse_intent',
@@ -103,12 +147,36 @@ export async function parseIntentNode(
   };
 
   try {
+    const memoryPrefix = memoryContext
+      ? `${memoryContext}\n\n`
+      : '';
+
     const response = await llm.invoke([
       {
         role: 'system',
-        content: `You are a DeFi intent parser. Extract the user's swap or transfer intent.
-Return ONLY valid JSON: { "action": "swap"|"transfer", "tokenIn": "SOL", "tokenOut": "USDC", "amountSOL": 0.1, "protocol": "jupiter"|"spl_transfer" }
-protocol must be one of: jupiter, spl_transfer.
+        content: `${memoryPrefix}You are a Solana DeFi intent parser. Extract the user's intent.
+Return ONLY valid JSON with no markdown code fences.
+
+Supported actions and their JSON shapes:
+
+1. swap:
+   { "action": "swap", "protocol": "jupiter", "amountSOL": 0.1, "tokenIn": "SOL", "tokenOut": "USDC" }
+
+2. transfer (single recipient):
+   { "action": "transfer", "protocol": "spl_transfer", "amountSOL": 0.05, "tokenIn": "SOL", "recipientPubkey": "<pubkey>" }
+
+3. multi_send (multiple recipients — fan-out):
+   { "action": "multi_send", "protocol": "multi_send", "amountSOL": <total>, "recipients": [ { "pubkey": "<addr1>", "amountSOL": 0.1 }, { "pubkey": "<addr2>", "amountSOL": 0.1 } ] }
+
+4. stake (native SOL staking via Marinade):
+   { "action": "stake", "protocol": "marinade", "amountSOL": 1.0 }
+
+5. analyze (wallet/token analysis — no transaction):
+   { "action": "analyze", "protocol": "analyze", "amountSOL": 0, "analysisType": "wallet"|"token", "subject": "<wallet pubkey or token symbol>" }
+   Use analysisType "wallet" when the user asks about wallet history, activity, safety, fees.
+   Use analysisType "token" when the user asks about a specific token's price, holders, volume.
+   For wallet analysis with no explicit subject, use the user's own pubkey as subject.
+
 If intent is ambiguous or unsafe, return { "error": "reason" }.`,
       },
       { role: 'user', content: state.intent },
@@ -158,6 +226,68 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
       };
     }
 
+    // ── Analyze branch ──────────────────────────────────────────────
+    if (parsed.action === 'analyze') {
+      return {
+        action: 'analyze',
+        protocol: 'analyze',
+        amountLamports: 0,
+        analysisType: parsed.analysisType,
+        analysisSubject: parsed.subject || state.pubkey,
+        steps: [
+          {
+            ...step,
+            status: 'success',
+            label: `Analyzing ${parsed.analysisType}: ${parsed.subject || 'your wallet'}`,
+          },
+        ],
+      };
+    }
+
+    // ── Multi-send branch ──────────────────────────────────────────
+    if (parsed.action === 'multi_send') {
+      const recipients = parsed.recipients.map((r) => ({
+        pubkey: normalizePubkey(r.pubkey) || r.pubkey,
+        amountLamports: Math.round(r.amountSOL * 1e9),
+      }));
+      const totalLamports = recipients.reduce(
+        (acc, r) => acc + r.amountLamports,
+        0,
+      );
+      return {
+        action: 'multi_send',
+        protocol: 'multi_send',
+        amountLamports: totalLamports,
+        recipients,
+        steps: [
+          {
+            ...step,
+            status: 'success',
+            label: `Parsing: multi-send ${parsed.amountSOL} SOL total to ${recipients.length} recipients`,
+            payload: { recipients, totalLamports },
+          },
+        ],
+      };
+    }
+
+    // ── Stake branch ───────────────────────────────────────────────
+    if (parsed.action === 'stake') {
+      const amountLamports = Math.round(parsed.amountSOL * 1e9);
+      return {
+        action: 'stake',
+        protocol: 'marinade',
+        amountLamports,
+        steps: [
+          {
+            ...step,
+            status: 'success',
+            label: `Parsing: stake ${parsed.amountSOL} SOL via Marinade`,
+            payload: { amountLamports },
+          },
+        ],
+      };
+    }
+
     const amountLamports = Math.round(parsed.amountSOL * 1e9);
     const protocol = parsed.protocol || 'jupiter';
     const tokenIn = parsed.tokenIn?.toUpperCase() || 'SOL';
@@ -168,8 +298,8 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
     const recipientPubkey =
       protocol === 'spl_transfer'
         ? normalizePubkey(parsed.recipientPubkey) ||
-          extractPubkeyFromIntent(state.intent) ||
-          state.pubkey
+        extractPubkeyFromIntent(state.intent) ||
+        state.pubkey
         : undefined;
 
     const transferLabel = recipientPubkey
@@ -311,7 +441,7 @@ export async function selectRouteNode(
         : result.jupiterQuote) as Record<string, unknown> | undefined,
       raydiumInstructions: result.raydiumInstructions ?? undefined,
       jupiterInstructions: result.jupiterInstructions as
-        | { swapTransaction?: string; [key: string]: unknown }
+        | { swapTransaction?: string;[key: string]: unknown }
         | undefined,
       addressLookupTables: result.addressLookupTables,
       routeOutAmount: result.outAmount,
@@ -549,7 +679,12 @@ export function policyRouter(state: AgentState): 'select_route' | '__end__' {
   if (state.policyValid === false || state.rejectionReason) {
     return '__end__';
   }
-  if (state.protocol !== 'jupiter') {
+  // analyze and multi_send don't go through the route selector
+  if (
+    state.protocol !== 'jupiter' ||
+    state.action === 'analyze' ||
+    state.action === 'multi_send'
+  ) {
     return '__end__';
   }
   return 'select_route';

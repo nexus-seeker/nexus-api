@@ -5,10 +5,14 @@ export interface ExecuteRequest {
 
 export type StepNode =
   | 'parse_intent'
+  | 'plan_actions'
+  | 'tool_executor'
   | 'validate_policy'
   | 'select_route'
   | 'build_transaction'
   | 'assemble_tx'
+  | 'multi_send'
+  | 'analyze'
   | 'error';
 
 export interface StepEvent {
@@ -46,6 +50,8 @@ export interface ExecuteResponse {
   runId: string;
   steps: StepEvent[];
   unsignedTx?: string;
+  /** Returned instead of unsignedTx for analysis / conversational intents */
+  agentMessage?: string;
   rejection?: {
     reason: string;
     policyField: string;

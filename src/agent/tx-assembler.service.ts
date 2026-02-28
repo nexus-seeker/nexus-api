@@ -34,7 +34,7 @@ export class TxAssemblerService {
   private readonly logger = new Logger(TxAssemblerService.name);
   private readonly maxRawTransactionBytes = 1232;
 
-  constructor(private readonly solanaService: SolanaService) {}
+  constructor(private readonly solanaService: SolanaService) { }
 
   private buildCheckAndRecordIxWithReceiptId(
     owner: PublicKey,
@@ -117,6 +117,62 @@ export class TxAssemblerService {
     );
   }
 
+  /**
+   * Fan-out send: packs N SystemProgram.transfer instructions into one
+   * VersionedTransaction, preceded by check_and_record using the total
+   * amount. Policy enforcement happens on-chain against the aggregate.
+   */
+  async assembleMultiSendTransaction(
+    owner: PublicKey,
+    recipients: Array<{ pubkey: PublicKey; amountLamports: number }>,
+    totalAmountLamports: number,
+  ): Promise<string> {
+    if (recipients.length === 0) {
+      throw new Error('Multi-send requires at least one recipient');
+    }
+
+    const vault = await this.solanaService.fetchPolicyVault(owner);
+    const receiptId = vault?.nextReceiptId ?? 0;
+
+    const checkAndRecordIx = this.buildCheckAndRecordIxWithReceiptId(
+      owner,
+      totalAmountLamports,
+      'multi_send',
+      receiptId,
+    );
+
+    const transferIxs = recipients.map(({ pubkey, amountLamports }) =>
+      SystemProgram.transfer({
+        fromPubkey: owner,
+        toPubkey: pubkey,
+        lamports: amountLamports,
+      }),
+    );
+
+    const allInstructions = [checkAndRecordIx, ...transferIxs];
+
+    this.logger.log(
+      `Assembling multi-send: ${recipients.length} transfers, ` +
+      `total ${totalAmountLamports} lamports`,
+    );
+
+    const txBase64 = await this.solanaService.buildVersionedTransaction(
+      owner,
+      allInstructions,
+      [],
+    );
+
+    if (this.isSerializedTransactionTooLarge(txBase64)) {
+      throw new Error(
+        `Multi-send transaction exceeds Solana size limit — reduce recipient count ` +
+        `(max ~20 transfers per transaction)`,
+      );
+    }
+
+    return txBase64;
+  }
+
+
   async assembleTransaction(
     owner: PublicKey,
     amount: number,
@@ -151,7 +207,7 @@ export class TxAssemblerService {
       const allInstructions = [checkAndRecordIx, ...jupiterIxs];
       this.logger.log(
         `Assembled ${allInstructions.length} instructions ` +
-          `(1 check_and_record + ${jupiterIxs.length} Jupiter)`,
+        `(1 check_and_record + ${jupiterIxs.length} Jupiter)`,
       );
 
       const txBase64 = await this.solanaService.buildVersionedTransaction(
@@ -296,7 +352,7 @@ export class TxAssemblerService {
 
     this.logger.log(
       `Assembled Raydium transaction with ${raydiumIxs.length} instructions ` +
-        `(1 check_and_record + ${raydiumIxs.length} Raydium)`,
+      `(1 check_and_record + ${raydiumIxs.length} Raydium)`,
     );
 
     return serialized;
@@ -316,7 +372,7 @@ export class TxAssemblerService {
     if (jupiterResult.swapTransaction && !jupiterResult.swapInstruction) {
       throw new Error(
         'Jupiter returned swapTransaction only; cannot prepend check_and_record. ' +
-          'Use swap-instructions endpoint.',
+        'Use swap-instructions endpoint.',
       );
     }
 
@@ -357,9 +413,9 @@ export class TxAssemblerService {
       candidate.setupInstructions == null
         ? undefined
         : this.assertInstructionList(
-            candidate.setupInstructions,
-            'setupInstructions',
-          );
+          candidate.setupInstructions,
+          'setupInstructions',
+        );
     const swapInstruction =
       candidate.swapInstruction == null
         ? undefined
@@ -368,9 +424,9 @@ export class TxAssemblerService {
       candidate.cleanupInstruction == null
         ? undefined
         : this.assertInstruction(
-            candidate.cleanupInstruction,
-            'cleanupInstruction',
-          );
+          candidate.cleanupInstruction,
+          'cleanupInstruction',
+        );
 
     if (
       candidate.swapTransaction != null &&
