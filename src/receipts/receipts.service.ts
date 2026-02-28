@@ -48,7 +48,7 @@ export class ReceiptsService {
       seekerId: receipt.seekerId,
       intentHash: this.toIntentHash(receipt.intentHash),
       protocol: receipt.protocol,
-      amountLamports: Number(receipt.amountLamports),
+      amountLamports: this.toSafeLamportsNumber(receipt.amountLamports),
       txSignature: receipt.txSignature,
       status: this.toReceiptStatus(receipt.status),
       timestamp: receipt.timestamp,
@@ -87,5 +87,15 @@ export class ReceiptsService {
     }
 
     return 'Unknown';
+  }
+
+  private toSafeLamportsNumber(value: bigint): number {
+    const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+    const minSafe = BigInt(Number.MIN_SAFE_INTEGER);
+    if (value > maxSafe || value < minSafe) {
+      throw new RangeError('amountLamports exceeds MAX_SAFE_INTEGER');
+    }
+
+    return Number(value);
   }
 }

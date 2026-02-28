@@ -90,4 +90,30 @@ describe('ReceiptReconcilerService', () => {
     expect(syncRecentOwnersSpy).toHaveBeenCalledTimes(1);
     jest.useRealTimers();
   });
+
+  it('does not start a second scheduled sync while one is in flight', () => {
+    jest.useFakeTimers();
+
+    const solana = {
+      fetchReceiptsByOwner: jest.fn(),
+    } as unknown as SolanaService;
+
+    const prisma = {
+      receiptCache: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    } as unknown as PrismaService;
+
+    const service = new ReceiptReconcilerService(prisma, solana);
+    const pendingSync = new Promise<void>(() => {});
+    const syncRecentOwnersSpy = jest.spyOn(service, 'syncRecentOwners').mockReturnValue(pendingSync);
+
+    (service as { onModuleInit: () => void }).onModuleInit();
+    jest.advanceTimersByTime(120_000);
+
+    expect(syncRecentOwnersSpy).toHaveBeenCalledTimes(1);
+
+    (service as { onModuleDestroy: () => void }).onModuleDestroy();
+    jest.useRealTimers();
+  });
 });

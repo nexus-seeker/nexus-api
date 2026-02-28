@@ -10,6 +10,7 @@ const DEFAULT_RECONCILIATION_INTERVAL_MS = 60_000;
 export class ReceiptReconcilerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ReceiptReconcilerService.name);
   private reconciliationTimer?: NodeJS.Timeout;
+  private isScheduledSyncInFlight = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -18,9 +19,18 @@ export class ReceiptReconcilerService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     this.reconciliationTimer = setInterval(() => {
-      void this.syncRecentOwners().catch((error) => {
-        this.logger.warn(`Scheduled receipt reconciliation failed: ${String(error)}`);
-      });
+      if (this.isScheduledSyncInFlight) {
+        return;
+      }
+
+      this.isScheduledSyncInFlight = true;
+      void this.syncRecentOwners()
+        .catch((error) => {
+          this.logger.warn(`Scheduled receipt reconciliation failed: ${String(error)}`);
+        })
+        .finally(() => {
+          this.isScheduledSyncInFlight = false;
+        });
     }, DEFAULT_RECONCILIATION_INTERVAL_MS);
   }
 
