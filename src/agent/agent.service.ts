@@ -106,8 +106,8 @@ export class AgentService {
         const allSteps: StepEvent[] = [];
 
         try {
-            await this.persistLifecycleEvent(runId, pubkey, 'run_started', { intent });
-            await this.persistLifecycleEvent(runId, pubkey, 'message_user', { content: intent });
+            void this.persistLifecycleEvent(runId, pubkey, 'run_started', { intent });
+            void this.persistLifecycleEvent(runId, pubkey, 'message_user', { content: intent });
 
             // ─── Real Execution ────────────────────────────────────────
 
