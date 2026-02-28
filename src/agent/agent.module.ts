@@ -18,6 +18,7 @@ import { MultiSendTool } from './tools/multi-send.tool';
 import { MarinadeStakeTool } from './tools/marinade-stake.tool';
 import { WalletAnalyzeTool } from './tools/wallet-analyze.tool';
 import { TokenInfoTool } from './tools/token-info.tool';
+import { MarginfiLendTool } from './tools/marginfi-lend.tool';
 
 const TOOL_PROVIDERS = [
   SwapTool,
@@ -26,6 +27,7 @@ const TOOL_PROVIDERS = [
   MarinadeStakeTool,
   WalletAnalyzeTool,
   TokenInfoTool,
+  MarginfiLendTool,
 ];
 
 @Module({
@@ -60,6 +62,7 @@ export class AgentModule implements OnModuleInit {
     private readonly marinadeStakeTool: MarinadeStakeTool,
     private readonly walletAnalyzeTool: WalletAnalyzeTool,
     private readonly tokenInfoTool: TokenInfoTool,
+    private readonly marginfiLendTool: MarginfiLendTool,
   ) { }
 
   onModuleInit(): void {
@@ -71,6 +74,7 @@ export class AgentModule implements OnModuleInit {
       this.marinadeStakeTool,
       this.walletAnalyzeTool,
       this.tokenInfoTool,
+      this.marginfiLendTool,
     ]) {
       this.toolRegistry.register(tool);
     }

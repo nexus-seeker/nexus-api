@@ -10,7 +10,7 @@ export interface AgentState {
   runId: string;
 
   // Parsed
-  action?: 'swap' | 'transfer' | 'multi_send' | 'stake' | 'analyze';
+  action?: string;
   tokenIn?: string;
   tokenOut?: string;
   amountLamports?: number;

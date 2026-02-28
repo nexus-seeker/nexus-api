@@ -6,3 +6,4 @@ export { MultiSendTool } from './multi-send.tool';
 export { MarinadeStakeTool } from './marinade-stake.tool';
 export { WalletAnalyzeTool } from './wallet-analyze.tool';
 export { TokenInfoTool } from './token-info.tool';
+export { MarginfiLendTool } from './marginfi-lend.tool';
