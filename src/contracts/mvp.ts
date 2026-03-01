@@ -13,6 +13,7 @@ export type StepNode =
   | 'assemble_tx'
   | 'multi_send'
   | 'analyze'
+  | 'synthesize_response'
   | 'error';
 
 export interface StepEvent {

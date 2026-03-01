@@ -43,14 +43,14 @@ Build the production image:
 docker build -t nexus-api .
 ```
 
-## Judge Runbook (No Mock, Devnet)
+## Judge Runbook (Devnet E2E)
 
-Run the backend in real mode:
+Run the backend:
 
 ```bash
 cp .env.example .env
 npm install
-MOCK_MODE=false npm run start:dev
+npm run start:dev
 ```
 
 Quick API smoke checks:

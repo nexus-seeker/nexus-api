@@ -2,11 +2,11 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PublicKey } from '@solana/web3.js';
 import type { AgentState, StepEvent, AgentRunResult } from './state';
-import type { ExecuteResponse } from '../contracts/mvp';
 import {
   parseIntentNode,
   buildTransactionNode,
   selectRouteNode,
+  synthesizeResponseNode,
 } from './graph';
 import { TxAssemblerService } from './tx-assembler.service';
 import { PolicyPrecheckService } from './policy-precheck.service';
@@ -70,46 +70,6 @@ export class AgentService {
     return this.executeAgentWithRunId(intent, pubkey, runId);
   }
 
-  public getMockResponse(): ExecuteResponse {
-    return {
-      runId: crypto.randomUUID(),
-      steps: [
-        {
-          node: 'parse_intent',
-          label: 'Parsing: swap 0.1 SOL to USDC',
-          status: 'success',
-        },
-        {
-          node: 'validate_policy',
-          label: 'Policy check passed \u2713',
-          status: 'success',
-        },
-        {
-          node: 'select_route',
-          label: 'Raydium CLMM wins — 0.0042 USDC better price',
-          status: 'success',
-        },
-        {
-          node: 'build_transaction',
-          label:
-            'Raydium route confirmed: 0.1 SOL \u2192 14.27 USDC (0.02% impact)',
-          status: 'success',
-        },
-        {
-          node: 'assemble_tx',
-          label: 'Transaction assembled with policy enforcement \u2713',
-          status: 'success',
-        },
-      ],
-      unsignedTx: 'MOCK_BASE64_TX_BYTES',
-      simulation: {
-        fee: 5000,
-        outAmount: 14230000,
-        priceImpact: '0.02%',
-      },
-    };
-  }
-
   private initializeRun(intent: string, pubkey: string): string {
     const runId = crypto.randomUUID();
     this.logger.log(`[${runId}] Starting agent run: "${intent}" for ${pubkey}`);
@@ -155,7 +115,8 @@ export class AgentService {
       }
 
       // Node 1: Parse Intent (with memory context injected into system prompt)
-      const parseResult = await parseIntentNode(state, llm, memoryContext);
+      const toolSchema = this.toolRegistry.getSchemaForLlm();
+      const parseResult = await parseIntentNode(state, llm, toolSchema, memoryContext);
       Object.assign(state, parseResult);
       if (parseResult.steps) {
         for (const step of parseResult.steps) {
@@ -282,6 +243,17 @@ export class AgentService {
         state.unsignedTxBase64 = toolResult.unsignedTxBase64;
         state.agentMessage = toolResult.agentMessage;
         state.simulationResult = toolResult.simulationResult;
+
+        // ─── Generate Conversational Response (Layer 5 UX) ────────────────
+        if (!state.agentMessage) { // Only synthesize if the tool didn't already
+          const synthResult = await synthesizeResponseNode(state, llm, toolResult, memoryContext);
+          Object.assign(state, synthResult);
+          if (synthResult.steps) {
+            for (const step of synthResult.steps) {
+              await this.emitStep(runId, pubkey, allSteps, step);
+            }
+          }
+        }
       }
 
       await this.emitStep(runId, pubkey, allSteps, {

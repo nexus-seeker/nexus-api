@@ -10,6 +10,7 @@ import { ToolRegistry } from './tools/tool.registry';
 import {
   parseIntentNode,
   buildTransactionNode,
+  synthesizeResponseNode,
 } from './graph';
 
 jest.mock('uuid', () => ({
@@ -21,6 +22,7 @@ jest.mock('./graph', () => ({
   buildTransactionNode: jest.fn(),
   selectRouteNode: jest.fn(),
   assembleTxNode: jest.fn(),
+  synthesizeResponseNode: jest.fn(),
 }));
 
 import { selectRouteNode } from './graph';
@@ -82,6 +84,11 @@ describe('AgentService', () => {
       stepEvent: { node: 'build_transaction', status: 'success', label: 'Tool executed ✓' },
     });
     (mockToolRegistry.getAll as jest.Mock).mockReturnValue([]);
+    // Default: synthesizeResponseNode returns a valid step
+    (synthesizeResponseNode as jest.Mock).mockResolvedValue({
+      agentMessage: 'Mocked conversational response',
+      steps: [{ node: 'synthesize_response', status: 'success', label: 'Response generated' }],
+    });
   });
 
   it.each([undefined, ''])(
@@ -487,7 +494,8 @@ describe('AgentService', () => {
       .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 6, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:05.000Z') })
       // select_route step (added by selectRouteNode mock)
       .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 7, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:06.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 8, eventType: 'run_completed', createdAt: new Date('2026-02-28T12:00:07.000Z') });
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 8, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:07.000Z') })
+      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 9, eventType: 'run_completed', createdAt: new Date('2026-02-28T12:00:08.000Z') });
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -605,6 +613,17 @@ describe('AgentService', () => {
       protocol: 'jupiter',
       steps: [parseStep],
     });
+
+    const synthStep = {
+      type: 'step',
+      node: 'synthesize_response',
+      status: 'success',
+      label: 'Generated response',
+    };
+    (synthesizeResponseNode as jest.Mock).mockResolvedValue({
+      agentMessage: 'Swapped 0.1 SOL for USDC',
+      steps: [synthStep],
+    });
     (buildTransactionNode as jest.Mock).mockResolvedValue({
       jupiterInstructions: { swapTransaction: 'jupiter-tx' },
       steps: [buildStep],
@@ -635,6 +654,7 @@ describe('AgentService', () => {
       runId,
       expect.objectContaining({ node: 'build_transaction', status: 'success' }),
     );
+    expect(runStream.emitStep).toHaveBeenCalledWith(runId, synthStep);
     expect(runStream.emitComplete).toHaveBeenCalledWith(runId, result);
   });
 

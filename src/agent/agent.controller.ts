@@ -36,10 +36,6 @@ export class AgentController {
             return { error: 'Both intent and pubkey are required' };
         }
 
-        if (process.env.MOCK_MODE === 'true') {
-            return this.agentService.getMockResponse();
-        }
-
         const result = this.agentService.startAgentRun(intent, pubkey);
         return result;
     }

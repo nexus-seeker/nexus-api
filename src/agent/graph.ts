@@ -15,94 +15,16 @@ const MINT_MAP: Record<string, string> = {
   BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
 };
 
-type ParsedIntentPayload =
-  | {
-    action: 'swap' | 'transfer' | 'stake';
-    protocol: 'jupiter' | 'spl_transfer' | 'marinade';
-    amountSOL: number;
-    tokenIn?: string;
-    tokenOut?: string;
-    recipientPubkey?: string;
-  }
-  | {
-    action: 'multi_send';
-    protocol: 'multi_send';
-    amountSOL: number; // total
-    recipients: Array<{ pubkey: string; amountSOL: number }>;
-  }
-  | {
-    action: 'analyze';
-    protocol: 'analyze';
-    amountSOL: 0;
-    analysisType: 'wallet' | 'token';
-    subject: string; // wallet pubkey or token symbol/mint
-  };
+// We now accept dynamic payloads from any registered tool.
+// The only strict requirement is that the LLM provides an "action" matching a tool name.
+type ParsedIntentPayload = Record<string, any> & { action: string };
 
 function isParsedIntentPayload(value: unknown): value is ParsedIntentPayload {
   if (!value || typeof value !== 'object') {
     return false;
   }
-
   const payload = value as Record<string, unknown>;
-
-  const validActions = ['swap', 'transfer', 'multi_send', 'stake', 'analyze'];
-  if (!validActions.includes(payload.action as string)) {
-    return false;
-  }
-
-  // Analysis branch — no amount required
-  if (payload.action === 'analyze') {
-    return (
-      (payload.analysisType === 'wallet' || payload.analysisType === 'token') &&
-      typeof payload.subject === 'string' &&
-      payload.subject.length > 0
-    );
-  }
-
-  // Multi-send branch
-  if (payload.action === 'multi_send') {
-    if (!Array.isArray(payload.recipients) || payload.recipients.length === 0) {
-      return false;
-    }
-    return payload.recipients.every((r: unknown) => {
-      if (!r || typeof r !== 'object') return false;
-      const entry = r as Record<string, unknown>;
-      return (
-        typeof entry.pubkey === 'string' &&
-        typeof entry.amountSOL === 'number' &&
-        entry.amountSOL > 0
-      );
-    });
-  }
-
-  // swap / transfer / stake
-  const hasValidProtocol = ['jupiter', 'spl_transfer', 'marinade'].includes(
-    payload.protocol as string,
-  );
-  const hasValidAmount =
-    typeof payload.amountSOL === 'number' &&
-    Number.isFinite(payload.amountSOL) &&
-    payload.amountSOL > 0;
-  const hasValidTokenIn =
-    payload.tokenIn === undefined ||
-    payload.tokenIn === null ||
-    typeof payload.tokenIn === 'string';
-  const hasValidTokenOut =
-    payload.tokenOut === undefined ||
-    payload.tokenOut === null ||
-    typeof payload.tokenOut === 'string';
-  const hasValidRecipientPubkey =
-    payload.recipientPubkey === undefined ||
-    payload.recipientPubkey === null ||
-    typeof payload.recipientPubkey === 'string';
-
-  return (
-    hasValidProtocol &&
-    hasValidAmount &&
-    hasValidTokenIn &&
-    hasValidTokenOut &&
-    hasValidRecipientPubkey
-  );
+  return typeof payload.action === 'string' && payload.action.length > 0;
 }
 
 function normalizePubkey(input?: string): string | undefined {
@@ -138,6 +60,7 @@ function extractPubkeyFromIntent(intent: string): string | undefined {
 export async function parseIntentNode(
   state: AgentState,
   llm: LlmClient,
+  toolSchema: string,
   memoryContext?: string,
 ): Promise<Partial<AgentState>> {
   const step: StepEvent = {
@@ -157,25 +80,9 @@ export async function parseIntentNode(
         content: `${memoryPrefix}You are a Solana DeFi intent parser. Extract the user's intent.
 Return ONLY valid JSON with no markdown code fences.
 
-Supported actions and their JSON shapes:
+Supported actions and their JSON schemas:
 
-1. swap:
-   { "action": "swap", "protocol": "jupiter", "amountSOL": 0.1, "tokenIn": "SOL", "tokenOut": "USDC" }
-
-2. transfer (single recipient):
-   { "action": "transfer", "protocol": "spl_transfer", "amountSOL": 0.05, "tokenIn": "SOL", "recipientPubkey": "<pubkey>" }
-
-3. multi_send (multiple recipients — fan-out):
-   { "action": "multi_send", "protocol": "multi_send", "amountSOL": <total>, "recipients": [ { "pubkey": "<addr1>", "amountSOL": 0.1 }, { "pubkey": "<addr2>", "amountSOL": 0.1 } ] }
-
-4. stake (native SOL staking via Marinade):
-   { "action": "stake", "protocol": "marinade", "amountSOL": 1.0 }
-
-5. analyze (wallet/token analysis — no transaction):
-   { "action": "analyze", "protocol": "analyze", "amountSOL": 0, "analysisType": "wallet"|"token", "subject": "<wallet pubkey or token symbol>" }
-   Use analysisType "wallet" when the user asks about wallet history, activity, safety, fees.
-   Use analysisType "token" when the user asks about a specific token's price, holders, volume.
-   For wallet analysis with no explicit subject, use the user's own pubkey as subject.
+${toolSchema}
 
 If intent is ambiguous or unsafe, return { "error": "reason" }.`,
       },
@@ -226,102 +133,48 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
       };
     }
 
-    // ── Analyze branch ──────────────────────────────────────────────
-    if (parsed.action === 'analyze') {
-      return {
-        action: 'analyze',
-        protocol: 'analyze',
-        amountLamports: 0,
-        analysisType: parsed.analysisType,
-        analysisSubject: parsed.subject || state.pubkey,
-        steps: [
-          {
-            ...step,
-            status: 'success',
-            label: `Analyzing ${parsed.analysisType}: ${parsed.subject || 'your wallet'}`,
-          },
-        ],
-      };
-    }
+    // If the parser returns an action but didn't match our exact old hardcoded paths,
+    // we still need to populate AgentState dynamically from the payload.
+    // We map generic properties from the parsed JSON payload.
 
-    // ── Multi-send branch ──────────────────────────────────────────
-    if (parsed.action === 'multi_send') {
-      const recipients = parsed.recipients.map((r) => ({
-        pubkey: normalizePubkey(r.pubkey) || r.pubkey,
-        amountLamports: Math.round(r.amountSOL * 1e9),
-      }));
-      const totalLamports = recipients.reduce(
-        (acc, r) => acc + r.amountLamports,
-        0,
-      );
-      return {
-        action: 'multi_send',
-        protocol: 'multi_send',
-        amountLamports: totalLamports,
-        recipients,
-        steps: [
-          {
-            ...step,
-            status: 'success',
-            label: `Parsing: multi-send ${parsed.amountSOL} SOL total to ${recipients.length} recipients`,
-            payload: { recipients, totalLamports },
-          },
-        ],
-      };
-    }
+    // Some tools still expect amountLamports instead of amountSOL directly in the state,
+    // (though the tool-calling refactor now passes the whole payload).
+    const _amountSOL = parsed.amountSOL || 0;
+    const amountLamports = Math.round(_amountSOL * 1e9);
 
-    // ── Stake branch ───────────────────────────────────────────────
-    if (parsed.action === 'stake') {
-      const amountLamports = Math.round(parsed.amountSOL * 1e9);
-      return {
-        action: 'stake',
-        protocol: 'marinade',
-        amountLamports,
-        steps: [
-          {
-            ...step,
-            status: 'success',
-            label: `Parsing: stake ${parsed.amountSOL} SOL via Marinade`,
-            payload: { amountLamports },
-          },
-        ],
-      };
-    }
-
-    const amountLamports = Math.round(parsed.amountSOL * 1e9);
-    const protocol = parsed.protocol || 'jupiter';
-    const tokenIn = parsed.tokenIn?.toUpperCase() || 'SOL';
-    const tokenOut =
-      protocol === 'jupiter'
-        ? parsed.tokenOut?.toUpperCase() || 'USDC'
-        : undefined;
-    const recipientPubkey =
-      protocol === 'spl_transfer'
-        ? normalizePubkey(parsed.recipientPubkey) ||
-        extractPubkeyFromIntent(state.intent) ||
-        state.pubkey
-        : undefined;
-
-    const transferLabel = recipientPubkey
-      ? `Parsing: transfer ${parsed.amountSOL} ${tokenIn} to ${recipientPubkey}`
-      : `Parsing: transfer ${parsed.amountSOL} ${tokenIn}`;
-    const swapLabel = `Parsing: ${parsed.action} ${parsed.amountSOL} ${tokenIn} to ${tokenOut}`;
+    // Dynamic resolution of protocol/token/etc.
+    const protocol = parsed.protocol || parsed.action;
+    const tokenIn = parsed.tokenIn?.toUpperCase() || undefined;
+    const tokenOut = parsed.tokenOut?.toUpperCase() || undefined;
+    const recipientPubkey = parsed.recipientPubkey
+      ? normalizePubkey(parsed.recipientPubkey) || parsed.recipientPubkey
+      : extractPubkeyFromIntent(state.intent);
 
     return {
       action: parsed.action,
-      tokenIn,
-      tokenOut,
       amountLamports,
       protocol,
+      tokenIn,
+      tokenOut,
       recipientPubkey,
+      // For multi-send
+      recipients: parsed.recipients?.map((r: any) => ({
+        pubkey: normalizePubkey(r.pubkey) || r.pubkey,
+        amountLamports: Math.round((r.amountSOL || 0) * 1e9),
+      })),
+      // For analyze
+      analysisType: parsed.analysisType,
+      analysisSubject: parsed.subject || state.pubkey,
+
       steps: [
         {
           ...step,
           status: 'success',
-          label: parsed.action === 'transfer' ? transferLabel : swapLabel,
+          label: `Parsed intent for action: ${parsed.action}`,
           payload: {
             ...parsed,
             recipientPubkey,
+            amountLamports,
           },
         },
       ],
@@ -700,4 +553,71 @@ export function protocolRouter(
     return 'assemble_tx';
   }
   return 'build_transaction';
+}
+
+// ─── Node 4: Synthesize Conversational Response (Layer 5 UX) ───────
+
+export async function synthesizeResponseNode(
+  state: AgentState,
+  llm: LlmClient,
+  toolResult: any,
+  memoryContext?: string,
+): Promise<Partial<AgentState>> {
+  const step: StepEvent = {
+    node: 'synthesize_response',
+    label: 'Generating assistant response...',
+    status: 'running',
+  };
+
+  try {
+    const memoryPrefix = memoryContext ? `User context:\n${memoryContext}\n\n` : '';
+    // Omit massive hex strings from the tool result to save tokens
+    const safeToolResult = { ...toolResult };
+    if (safeToolResult.unsignedTxBase64) safeToolResult.unsignedTxBase64 = '<base64_omitted>';
+
+    const toolResultStr = JSON.stringify(safeToolResult, null, 2);
+
+    const response = await llm.invoke([
+      {
+        role: 'system',
+        content: `${memoryPrefix}You are a helpful Solana DeFi assistant named NEXUS.
+Your job is to read the result of the tool the user just executed, and write a friendly, concise summary of what happened.
+
+Guidelines:
+1. Be extremely concise (1-3 sentences max). No fluff, no robotic pleasantries.
+2. If the user swapped or moved tokens, confirm the amounts.
+3. Keep the tone professional but helpful.
+4. If the tool result contains an error or rejection, explain it safely and clearly without raw technical jargon.
+5. If the user finished an action and it makes sense, suggest a relevant NEXT step proactively in a natural way. (e.g. if they swapped to USDC, suggest lending it for yield, or sending it).
+
+Tool result:
+${toolResultStr}
+
+User original intent: ${state.intent}`,
+      },
+    ]);
+
+    const agentMessage = typeof response.content === 'string'
+      ? response.content
+      : JSON.stringify(response.content);
+
+    return {
+      agentMessage,
+      steps: [
+        {
+          ...step,
+          status: 'success',
+          label: 'Generated response',
+        },
+      ],
+    };
+  } catch (err: any) {
+    // Non-fatal, just log and fallback
+    return {
+      agentMessage: 'Action completed. Check your wallet or activity feed for details.',
+      steps: [
+        { ...step, status: 'success', label: 'Response generation skipped' },
+      ],
+    };
+  }
 }
