@@ -139,11 +139,21 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
 
     // Some tools still expect amountLamports instead of amountSOL directly in the state,
     // (though the tool-calling refactor now passes the whole payload).
-    const fallbackAmountLamports = parsed.amountSOL ? Math.round(parsed.amountSOL * 1e9) : 0;
-    const amountLamports = parsed.amountLamports ?? fallbackAmountLamports;
+    let amountLamports = 0;
+    if (parsed.amountLamports !== undefined && parsed.amountLamports !== null) {
+      amountLamports = Number(parsed.amountLamports);
+    } else if (parsed.amountSOL !== undefined && parsed.amountSOL !== null) {
+      amountLamports = Math.round(Number(parsed.amountSOL) * 1e9);
+    } else if (parsed.amount !== undefined && parsed.amount !== null) {
+      // Sometimes LLM just emits "amount"
+      amountLamports = Math.round(Number(parsed.amount) * 1e9);
+    }
 
     // Dynamic resolution of protocol/token/etc.
-    const protocol = parsed.protocol || parsed.action;
+    let protocol = parsed.protocol || parsed.action;
+    if (protocol === 'transfer') {
+      protocol = 'spl_transfer'; // Align with on-chain representation
+    }
     const tokenIn = parsed.tokenIn?.toUpperCase() || undefined;
     const tokenOut = parsed.tokenOut?.toUpperCase() || undefined;
     const recipientPubkey = parsed.recipientPubkey
