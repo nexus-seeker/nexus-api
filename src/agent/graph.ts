@@ -139,8 +139,8 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
 
     // Some tools still expect amountLamports instead of amountSOL directly in the state,
     // (though the tool-calling refactor now passes the whole payload).
-    const _amountSOL = parsed.amountSOL || 0;
-    const amountLamports = Math.round(_amountSOL * 1e9);
+    const fallbackAmountLamports = parsed.amountSOL ? Math.round(parsed.amountSOL * 1e9) : 0;
+    const amountLamports = parsed.amountLamports ?? fallbackAmountLamports;
 
     // Dynamic resolution of protocol/token/etc.
     const protocol = parsed.protocol || parsed.action;
