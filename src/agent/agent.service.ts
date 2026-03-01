@@ -21,6 +21,7 @@ import { BirdeyeService } from '../analysis/birdeye.service';
 import { MarinadeService } from '../protocols/marinade.service';
 import { UserMemoryService } from '../memory/user-memory.service';
 import { ToolRegistry } from './tools/tool.registry';
+import { NameResolutionService } from './name-resolution.service';
 import type { Prisma } from '@prisma/client';
 
 @Injectable()
@@ -42,6 +43,7 @@ export class AgentService {
     @Optional() private readonly birdeyeService?: BirdeyeService,
     @Optional() private readonly marinadeService?: MarinadeService,
     @Optional() private readonly userMemoryService?: UserMemoryService,
+    @Optional() private readonly nameResolutionService?: NameResolutionService,
   ) { }
 
   startAgentRun(intent: string, pubkey: string): AgentRunResult {
@@ -126,6 +128,28 @@ export class AgentService {
 
       if (state.rejectionReason) {
         return this.finishRun(runId, allSteps, state);
+      }
+
+      const resolutionResult = await this.resolveRecipientsInState(state);
+      if (!resolutionResult.ok) {
+        state.policyValid = false;
+        state.rejectionReason = `Recipient resolution failed: ${resolutionResult.reason}`;
+        state.rejectionField = 'recipient_resolution';
+        await this.emitStep(runId, pubkey, allSteps, {
+          node: 'plan_actions',
+          status: 'rejected',
+          label: state.rejectionReason,
+        });
+        return this.finishRun(runId, allSteps, state);
+      }
+
+      if (resolutionResult.resolved.length > 0) {
+        await this.emitStep(runId, pubkey, allSteps, {
+          node: 'plan_actions',
+          status: 'success',
+          label: `Resolved ${resolutionResult.resolved.length} recipient name(s)`,
+          payload: resolutionResult.resolved,
+        });
       }
 
       // ─── plan_actions: Map parsed intent → tool name ──────────────
@@ -273,6 +297,61 @@ export class AgentService {
       });
       return this.finishRun(runId, allSteps, state);
     }
+  }
+
+  private async resolveRecipientsInState(state: AgentState): Promise<{
+    ok: boolean;
+    reason?: string;
+    resolved: Array<{ input: string; address: string }>;
+  }> {
+    if (!this.nameResolutionService) {
+      return { ok: true, resolved: [] };
+    }
+
+    const resolved: Array<{ input: string; address: string }> = [];
+
+    if (state.recipientPubkey) {
+      try {
+        const result = await this.nameResolutionService.resolveNameOrAddress(
+          state.recipientPubkey,
+        );
+        state.recipientPubkey = result.address;
+        if (result.source === 'sns_domain') {
+          resolved.push({ input: result.input, address: result.address });
+        }
+      } catch (error: any) {
+        return { ok: false, reason: error?.message || 'Unknown recipient resolution error', resolved };
+      }
+    }
+
+    if (state.recipients && state.recipients.length > 0) {
+      const nextRecipients = [] as Array<{ pubkey: string; amountLamports: number }>;
+
+      for (const recipient of state.recipients) {
+        try {
+          const result = await this.nameResolutionService.resolveNameOrAddress(
+            recipient.pubkey,
+          );
+          nextRecipients.push({
+            ...recipient,
+            pubkey: result.address,
+          });
+          if (result.source === 'sns_domain') {
+            resolved.push({ input: result.input, address: result.address });
+          }
+        } catch (error: any) {
+          return {
+            ok: false,
+            reason: error?.message || `Could not resolve ${recipient.pubkey}`,
+            resolved,
+          };
+        }
+      }
+
+      state.recipients = nextRecipients;
+    }
+
+    return { ok: true, resolved };
   }
 
   private async finishRun(

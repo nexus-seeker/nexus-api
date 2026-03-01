@@ -1094,4 +1094,186 @@ describe('AgentService', () => {
       }),
     );
   });
+
+  it('resolves sns recipient names before tool dispatch', async () => {
+    const txAssembler = {} as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({ allowed: true, reason: 'ok' }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const nameResolutionService = {
+      resolveNameOrAddress: jest.fn().mockResolvedValue({
+        input: 'alice.skr',
+        address: 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+        source: 'sns_domain',
+      }),
+    };
+
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      nameResolutionService as any,
+    );
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'transfer',
+      amountLamports: 1_000_000,
+      protocol: 'spl_transfer',
+      recipientPubkey: 'alice.skr',
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+    });
+
+    const result = await service.executeAgent(
+      'send 0.001 SOL to alice.skr',
+      '11111111111111111111111111111111',
+    );
+
+    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenCalledWith('alice.skr');
+    expect(mockToolRegistry.dispatch).toHaveBeenCalledWith(
+      'transfer',
+      expect.objectContaining({
+        recipientPubkey: 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+      }),
+      expect.anything(),
+    );
+    expect(result.rejection).toBeUndefined();
+  });
+
+  it('resolves multi-send sns recipients before tool dispatch', async () => {
+    const txAssembler = {} as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({ allowed: true, reason: 'ok' }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const nameResolutionService = {
+      resolveNameOrAddress: jest.fn().mockImplementation(async (input: string) => {
+        const MAP: Record<string, string> = {
+          'alice.skr': 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+          'bob.skr': 'DasLSgNnPyMmFFGNQf45jraj37GgnQZRaqQ5YptVVsVo',
+        };
+        return {
+          input,
+          address: MAP[input] ?? input,
+          source: 'sns_domain',
+        };
+      }),
+    };
+
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      nameResolutionService as any,
+    );
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'multi_send',
+      amountLamports: 800_000_000,
+      protocol: 'multi_send',
+      recipients: [
+        { pubkey: 'alice.skr', amountLamports: 500_000_000 },
+        { pubkey: 'bob.skr', amountLamports: 300_000_000 },
+      ],
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+    });
+
+    const result = await service.executeAgent(
+      'pay alice.skr 0.5 SOL and bob.skr 0.3 SOL',
+      '11111111111111111111111111111111',
+    );
+
+    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenNthCalledWith(1, 'alice.skr');
+    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenNthCalledWith(2, 'bob.skr');
+    expect(mockToolRegistry.dispatch).toHaveBeenCalledWith(
+      'multi_send',
+      expect.objectContaining({
+        recipients: [
+          {
+            pubkey: 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+            amountLamports: 500_000_000,
+          },
+          {
+            pubkey: 'DasLSgNnPyMmFFGNQf45jraj37GgnQZRaqQ5YptVVsVo',
+            amountLamports: 300_000_000,
+          },
+        ],
+      }),
+      expect.anything(),
+    );
+    expect(result.rejection).toBeUndefined();
+  });
+
+  it('rejects when sns recipient cannot be resolved', async () => {
+    const txAssembler = {} as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({ allowed: true, reason: 'ok' }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+
+    const nameResolutionService = {
+      resolveNameOrAddress: jest
+        .fn()
+        .mockRejectedValue(new Error('Could not resolve alice.skr')),
+    };
+
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      nameResolutionService as any,
+    );
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'transfer',
+      amountLamports: 1_000_000,
+      protocol: 'spl_transfer',
+      recipientPubkey: 'alice.skr',
+      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+    });
+
+    const result = await service.executeAgent(
+      'send 0.001 SOL to alice.skr',
+      '11111111111111111111111111111111',
+    );
+
+    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenCalledWith('alice.skr');
+    expect(mockToolRegistry.dispatch).not.toHaveBeenCalled();
+    expect(result.rejection).toEqual({
+      reason: 'Recipient resolution failed: Could not resolve alice.skr',
+      policyField: 'recipient_resolution',
+    });
+  });
 });

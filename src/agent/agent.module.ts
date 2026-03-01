@@ -19,6 +19,7 @@ import { MarinadeStakeTool } from './tools/marinade-stake.tool';
 import { WalletAnalyzeTool } from './tools/wallet-analyze.tool';
 import { TokenInfoTool } from './tools/token-info.tool';
 import { MarginfiLendTool } from './tools/marginfi-lend.tool';
+import { NameResolutionService } from './name-resolution.service';
 
 const TOOL_PROVIDERS = [
   SwapTool,
@@ -40,6 +41,7 @@ const TOOL_PROVIDERS = [
     RunStreamService,
     HistoryEventsService,
     HistoryProjectionService,
+    NameResolutionService,
     ToolRegistry,
     ...TOOL_PROVIDERS,
   ],
@@ -50,6 +52,7 @@ const TOOL_PROVIDERS = [
     RunStreamService,
     HistoryEventsService,
     HistoryProjectionService,
+    NameResolutionService,
     ToolRegistry,
   ],
 })
