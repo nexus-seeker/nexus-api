@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
 import { TxAssemblerService } from './tx-assembler.service';
@@ -9,9 +9,27 @@ import { DatabaseModule } from '../database/database.module';
 import { ProtocolsModule } from '../protocols/protocols.module';
 import { HistoryEventsService } from '../history/history-events.service';
 import { HistoryProjectionService } from '../history/history-projection.service';
+import { AnalysisModule } from '../analysis/analysis.module';
+import { MemoryModule } from '../memory/memory.module';
+import { ToolRegistry } from './tools/tool.registry';
+import { SwapTool } from './tools/swap.tool';
+import { SplTransferTool } from './tools/spl-transfer.tool';
+import { MultiSendTool } from './tools/multi-send.tool';
+import { MarinadeStakeTool } from './tools/marinade-stake.tool';
+import { WalletAnalyzeTool } from './tools/wallet-analyze.tool';
+import { TokenInfoTool } from './tools/token-info.tool';
+
+const TOOL_PROVIDERS = [
+  SwapTool,
+  SplTransferTool,
+  MultiSendTool,
+  MarinadeStakeTool,
+  WalletAnalyzeTool,
+  TokenInfoTool,
+];
 
 @Module({
-  imports: [LlmModule, DatabaseModule, ProtocolsModule],
+  imports: [LlmModule, DatabaseModule, ProtocolsModule, AnalysisModule, MemoryModule],
   controllers: [AgentController],
   providers: [
     AgentService,
@@ -20,6 +38,8 @@ import { HistoryProjectionService } from '../history/history-projection.service'
     RunStreamService,
     HistoryEventsService,
     HistoryProjectionService,
+    ToolRegistry,
+    ...TOOL_PROVIDERS,
   ],
   exports: [
     AgentService,
@@ -28,6 +48,31 @@ import { HistoryProjectionService } from '../history/history-projection.service'
     RunStreamService,
     HistoryEventsService,
     HistoryProjectionService,
+    ToolRegistry,
   ],
 })
-export class AgentModule {}
+export class AgentModule implements OnModuleInit {
+  constructor(
+    private readonly toolRegistry: ToolRegistry,
+    private readonly swapTool: SwapTool,
+    private readonly splTransferTool: SplTransferTool,
+    private readonly multiSendTool: MultiSendTool,
+    private readonly marinadeStakeTool: MarinadeStakeTool,
+    private readonly walletAnalyzeTool: WalletAnalyzeTool,
+    private readonly tokenInfoTool: TokenInfoTool,
+  ) { }
+
+  onModuleInit(): void {
+    // Auto-register all tools with the registry at startup
+    for (const tool of [
+      this.swapTool,
+      this.splTransferTool,
+      this.multiSendTool,
+      this.marinadeStakeTool,
+      this.walletAnalyzeTool,
+      this.tokenInfoTool,
+    ]) {
+      this.toolRegistry.register(tool);
+    }
+  }
+}

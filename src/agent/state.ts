@@ -10,12 +10,20 @@ export interface AgentState {
   runId: string;
 
   // Parsed
-  action?: 'swap' | 'transfer';
+  action?: 'swap' | 'transfer' | 'multi_send' | 'stake' | 'analyze';
   tokenIn?: string;
   tokenOut?: string;
   amountLamports?: number;
   protocol?: string;
   recipientPubkey?: string;
+
+  // Multi-send
+  recipients?: Array<{ pubkey: string; amountLamports: number }>;
+
+  // Analysis
+  analysisType?: 'wallet' | 'token';
+  analysisSubject?: string; // wallet pubkey or token mint/symbol
+  agentMessage?: string;   // plain-text response for non-tx intents
 
   // Policy check
   policyValid?: boolean;

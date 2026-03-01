@@ -7,6 +7,7 @@ import { PolicyModule } from './policy/policy.module';
 import { ReceiptsModule } from './receipts/receipts.module';
 import { DatabaseModule } from './database/database.module';
 import { HistoryModule } from './history/history.module';
+import { MemoryModule } from './memory/memory.module';
 
 @Module({
   imports: [
@@ -16,8 +17,10 @@ import { HistoryModule } from './history/history.module';
     PolicyModule,
     ReceiptsModule,
     HistoryModule,
+    MemoryModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule { }
+

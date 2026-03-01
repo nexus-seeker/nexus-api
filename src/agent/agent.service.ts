@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PublicKey } from '@solana/web3.js';
 import type { AgentState, StepEvent, AgentRunResult } from './state';
@@ -16,6 +16,11 @@ import { SolanaService } from '../solana/solana.service';
 import { HistoryEventsService } from '../history/history-events.service';
 import { HistoryProjectionService } from '../history/history-projection.service';
 import { RouteSelectorService } from '../protocols/route-selector.service';
+import { HeliusService } from '../analysis/helius.service';
+import { BirdeyeService } from '../analysis/birdeye.service';
+import { MarinadeService } from '../protocols/marinade.service';
+import { UserMemoryService } from '../memory/user-memory.service';
+import { ToolRegistry } from './tools/tool.registry';
 import type { Prisma } from '@prisma/client';
 
 @Injectable()
@@ -30,9 +35,14 @@ export class AgentService {
     private readonly llmService: LlmService,
     private readonly solanaService: SolanaService,
     private readonly routeSelector: RouteSelectorService,
-    private readonly historyEvents?: HistoryEventsService,
-    private readonly historyProjection?: HistoryProjectionService,
-  ) {}
+    private readonly toolRegistry: ToolRegistry,
+    @Optional() private readonly historyEvents?: HistoryEventsService,
+    @Optional() private readonly historyProjection?: HistoryProjectionService,
+    @Optional() private readonly heliusService?: HeliusService,
+    @Optional() private readonly birdeyeService?: BirdeyeService,
+    @Optional() private readonly marinadeService?: MarinadeService,
+    @Optional() private readonly userMemoryService?: UserMemoryService,
+  ) { }
 
   startAgentRun(intent: string, pubkey: string): AgentRunResult {
     const runId = this.initializeRun(intent, pubkey);
@@ -131,9 +141,21 @@ export class AgentService {
 
       // ─── Real Execution ────────────────────────────────────────
 
-      // Node 1: Parse Intent
+      // Load user memory for LLM context injection (non-blocking — errors are silenced)
       const llm = this.llmService.getLlm();
-      const parseResult = await parseIntentNode(state, llm);
+      let memoryContext: string | undefined;
+      if (this.userMemoryService) {
+        try {
+          const memory = await this.userMemoryService.findOrCreate(pubkey);
+          const ctx = this.userMemoryService.buildContextString(memory);
+          if (ctx) memoryContext = ctx;
+        } catch {
+          // Non-fatal: proceed without memory context
+        }
+      }
+
+      // Node 1: Parse Intent (with memory context injected into system prompt)
+      const parseResult = await parseIntentNode(state, llm, memoryContext);
       Object.assign(state, parseResult);
       if (parseResult.steps) {
         for (const step of parseResult.steps) {
@@ -145,195 +167,126 @@ export class AgentService {
         return this.finishRun(runId, allSteps, state);
       }
 
-      // Node 1.5: Onboarding Guard — fail fast if wallet not initialized
-      const ownerKey = new PublicKey(pubkey);
-      const agentProfile = await this.solanaService.fetchAgentProfile(ownerKey);
-      if (!agentProfile) {
-        const notOnboardedStep: StepEvent = {
-          node: 'validate_policy',
-          status: 'rejected',
-          label:
-            'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.',
-        };
-        await this.emitStep(runId, pubkey, allSteps, notOnboardedStep);
-        state.policyValid = false;
-        state.rejectionReason =
-          'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.';
-        state.rejectionField = 'not_onboarded';
-        return this.finishRun(runId, allSteps, state);
-      }
+      // ─── plan_actions: Map parsed intent → tool name ──────────────
+      // analysis intents skip policy check (no funds moved)
+      const isAnalysis = state.action === 'analyze';
 
-      // Node 2: Validate Policy (deterministic precheck)
-      let precheck;
-      try {
-        precheck = await this.policyPrecheck.precheck({
-          pubkey,
-          amountLamports: state.amountLamports || 0,
-          protocol: state.protocol || 'jupiter',
-        });
-      } catch (err: any) {
-        const errorMessage = err?.message || 'Unknown precheck error';
-        this.logger.error(`[${runId}] Policy precheck error: ${errorMessage}`);
-        state.policyValid = false;
-        state.rejectionReason = `Policy precheck failed: ${errorMessage}`;
-        state.rejectionField = 'policy_fetch';
-        await this.emitStep(runId, pubkey, allSteps, {
-          node: 'validate_policy',
-          status: 'rejected',
-          label: `Policy precheck error: ${errorMessage}`,
-        });
-        return this.finishRun(runId, allSteps, state);
-      }
+      const toolName = this.resolveToolName(state.action);
 
       await this.emitStep(runId, pubkey, allSteps, {
-        node: 'validate_policy',
-        status: precheck.allowed ? 'success' : 'rejected',
-        label: precheck.allowed
-          ? `Policy check passed: ${precheck.reason}`
-          : `Policy check failed: ${precheck.reason}`,
+        node: 'plan_actions',
+        status: 'success',
+        label: `Selected tool: ${toolName}`,
         payload: {
-          amountLamports: precheck.amountLamports,
-          protocol: precheck.protocol,
-          effectiveSpendLamports: precheck.effectiveSpendLamports,
-          projectedSpendLamports: precheck.projectedSpendLamports,
-          dailyMaxLamports: precheck.dailyMaxLamports,
-          allowedProtocols: precheck.allowedProtocols,
-          lastResetTs: precheck.lastResetTs,
+          tool: toolName,
+          action: state.action,
+          protocol: state.protocol,
+          availableTools: this.toolRegistry.getAll().map((t) => t.name),
         },
       });
 
-      if (!precheck.allowed) {
-        state.policyValid = false;
-        state.rejectionReason = precheck.reason;
-        state.rejectionField = precheck.rejectionField || 'policy';
-        return this.finishRun(runId, allSteps, state);
-      }
-
-      state.policyValid = true;
-
-      // Node 3: Build Transaction (Jupiter - fetches quote/instructions)
-      const buildResult = await buildTransactionNode(state);
-      Object.assign(state, buildResult);
-      if (buildResult.steps) {
-        for (const step of buildResult.steps) {
-          await this.emitStep(runId, pubkey, allSteps, step);
-        }
-      }
-
-      if (state.rejectionReason) {
-        return this.finishRun(runId, allSteps, state);
-      }
-
-      // Node 3.5: Select Route (compare Raydium vs Jupiter, pick winner)
-      const routeResult = await selectRouteNode(state, this.routeSelector);
-      Object.assign(state, routeResult);
-      if (routeResult.steps) {
-        for (const step of routeResult.steps) {
-          await this.emitStep(runId, pubkey, allSteps, step);
-        }
-      }
-
-      // Node 4: Assemble Transaction (prepend check_and_record_ix)
-      const assembleStep: StepEvent = {
-        node: 'assemble_tx',
-        label: 'Assembling transaction...',
-        status: 'running',
-      };
-
-      try {
-        const ownerPubkey = new PublicKey(pubkey);
-        // Use selectedProtocol from route selector, fallback to original protocol
-        const selectedProtocol =
-          state.selectedProtocol || state.protocol || 'jupiter';
-
-        let txBase64: string;
-        if (selectedProtocol === 'spl_transfer') {
-          if (!state.recipientPubkey) {
-            throw new Error('Missing transfer recipient pubkey');
-          }
-
-          txBase64 = await this.txAssembler.assembleSplTransferTransaction(
-            ownerPubkey,
-            new PublicKey(state.recipientPubkey),
-            state.amountLamports || 0,
-          );
-        } else if (
-          selectedProtocol === 'raydium' &&
-          state.raydiumInstructions
-        ) {
-          // Raydium path: instructions arrive as base64 VersionedTransaction
-          txBase64 = await this.txAssembler.assembleFromRaydiumTx({
-            userPubkey: pubkey,
-            amountLamports: state.amountLamports || 0,
-            protocol: 'raydium',
-            raydiumTxBase64: state.raydiumInstructions[0].transaction,
-            addressLookupTables: state.addressLookupTables ?? [],
+      // ─── Onboarding Guard (skip for analysis — no funds moved) ────
+      if (!isAnalysis) {
+        const ownerKey = new PublicKey(pubkey);
+        const agentProfile = await this.solanaService.fetchAgentProfile(ownerKey);
+        if (!agentProfile) {
+          await this.emitStep(runId, pubkey, allSteps, {
+            node: 'validate_policy',
+            status: 'rejected',
+            label: 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.',
           });
-        } else {
-          // Jupiter path
-          if (!state.jupiterInstructions) {
-            throw new Error('Missing Jupiter instructions');
-          }
-
-          txBase64 = await this.txAssembler.assembleTransaction(
-            ownerPubkey,
-            state.amountLamports || 0,
-            selectedProtocol,
-            state.jupiterInstructions,
-          );
+          state.policyValid = false;
+          state.rejectionReason = 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.';
+          state.rejectionField = 'not_onboarded';
+          return this.finishRun(runId, allSteps, state);
         }
 
-        if (!txBase64) {
-          throw new Error('Assembler returned empty transaction');
-        }
-
-        state.unsignedTxBase64 = txBase64;
-
-        // Simulation is best-effort — Jupiter DEX programs (Orca, Raydium, etc.)
-        // don't exist on devnet, so simulating the full tx will throw
-        // InvalidProgramForExecution. We still return the unsigned tx for signing.
-        // Real policy enforcement happens atomically on-chain.
-        let simulationFee = 5000; // default lamport estimate
+        // ─── Policy Precheck ────────────────────────────────────────
+        let precheck;
         try {
-          const simulation =
-            await this.txAssembler.simulateUnsignedTx(txBase64);
-          simulationFee = simulation.fee;
-        } catch (simErr: any) {
-          this.logger.warn(
-            `[${runId}] Simulation skipped (non-fatal): ${simErr?.message ?? simErr}`,
-          );
+          precheck = await this.policyPrecheck.precheck({
+            pubkey,
+            amountLamports: state.amountLamports || 0,
+            protocol: state.protocol || 'jupiter',
+          });
+        } catch (err: any) {
+          const errorMessage = err?.message || 'Unknown precheck error';
+          this.logger.error(`[${runId}] Policy precheck error: ${errorMessage}`);
+          state.policyValid = false;
+          state.rejectionReason = `Policy precheck failed: ${errorMessage}`;
+          state.rejectionField = 'policy_fetch';
+          await this.emitStep(runId, pubkey, allSteps, {
+            node: 'validate_policy',
+            status: 'rejected',
+            label: `Policy precheck error: ${errorMessage}`,
+          });
+          return this.finishRun(runId, allSteps, state);
         }
 
-        state.simulationResult = {
-          fee: simulationFee,
-          outAmount:
-            state.routeOutAmount ||
-            state.simulationResult?.outAmount ||
-            (selectedProtocol === 'spl_transfer'
-              ? state.amountLamports || 0
-              : 0),
-          priceImpact:
-            state.routePriceImpact ||
-            state.simulationResult?.priceImpact ||
-            '0.00%',
-        };
+        await this.emitStep(runId, pubkey, allSteps, {
+          node: 'validate_policy',
+          status: precheck.allowed ? 'success' : 'rejected',
+          label: precheck.allowed
+            ? `Policy check passed: ${precheck.reason}`
+            : `Policy check failed: ${precheck.reason}`,
+          payload: {
+            amountLamports: precheck.amountLamports,
+            protocol: precheck.protocol,
+            effectiveSpendLamports: precheck.effectiveSpendLamports,
+            projectedSpendLamports: precheck.projectedSpendLamports,
+            dailyMaxLamports: precheck.dailyMaxLamports,
+            allowedProtocols: precheck.allowedProtocols,
+            lastResetTs: precheck.lastResetTs,
+          },
+        });
 
-        await this.emitStep(runId, pubkey, allSteps, {
-          ...assembleStep,
-          status: 'success',
-          label: 'Transaction assembled with policy enforcement ✓',
-        });
-      } catch (err: any) {
-        const errorMessage = err?.message || 'Unknown tx assembly error';
-        this.logger.error(`[${runId}] TxAssembly error: ${errorMessage}`);
-        state.rejectionReason = `Tx assembly failed: ${errorMessage}`;
-        state.rejectionField = 'tx_assembly';
-        await this.emitStep(runId, pubkey, allSteps, {
-          ...assembleStep,
-          status: 'rejected',
-          label: `Assembly error: ${errorMessage}`,
-        });
+        if (!precheck.allowed) {
+          state.policyValid = false;
+          state.rejectionReason = precheck.reason;
+          state.rejectionField = precheck.rejectionField || 'policy';
+          return this.finishRun(runId, allSteps, state);
+        }
+
+        state.policyValid = true;
       }
+
+      // ─── Tool Executor ──────────────────────────────────────────────
+      //
+      // Build args for the selected tool from the parsed state, then dispatch.
+      // This single call replaces ~200 lines of hardcoded if/else branches.
+      //
+      const toolArgs = this.buildToolArgs(state);
+
+      await this.emitStep(runId, pubkey, allSteps, {
+        node: 'tool_executor',
+        status: 'running',
+        label: `Executing ${toolName}...`,
+      });
+
+      const toolResult = await this.toolRegistry.dispatch(toolName, toolArgs, {
+        pubkey,
+        runId,
+        llm,
+        txAssembler: this.txAssembler,
+        routeSelector: this.routeSelector,
+        heliusService: this.heliusService,
+        birdeyeService: this.birdeyeService,
+        marinadeService: this.marinadeService,
+      });
+
+      // Apply tool result to state
+      if (!toolResult.success) {
+        state.rejectionReason = toolResult.rejectionReason;
+        state.rejectionField = toolResult.rejectionField;
+      } else {
+        state.unsignedTxBase64 = toolResult.unsignedTxBase64;
+        state.agentMessage = toolResult.agentMessage;
+        state.simulationResult = toolResult.simulationResult;
+      }
+
+      await this.emitStep(runId, pubkey, allSteps, {
+        ...toolResult.stepEvent,
+      });
 
       return this.finishRun(runId, allSteps, state);
     } catch (err: any) {
@@ -361,6 +314,10 @@ export class AgentService {
       result.unsignedTx = state.unsignedTxBase64;
     }
 
+    if (state.agentMessage) {
+      result.agentMessage = state.agentMessage;
+    }
+
     if (state.rejectionReason) {
       result.rejection = {
         reason: state.rejectionReason,
@@ -373,6 +330,16 @@ export class AgentService {
     }
 
     this.runStream.emitComplete(runId, result);
+
+    // Update user memory after every successful (non-rejected) run
+    if (!result.rejection && this.userMemoryService) {
+      void this.userMemoryService.updateAfterRun(state.pubkey, {
+        tokenIn: state.tokenIn,
+        tokenOut: state.tokenOut,
+        amountSol: state.amountLamports ? state.amountLamports / 1e9 : undefined,
+        recipientPubkey: state.recipientPubkey,
+      });
+    }
 
     if (result.rejection) {
       void this.enqueueLifecyclePersistence(
@@ -468,5 +435,53 @@ export class AgentService {
         `[${runId}] Lifecycle persistence failed for ${type}: ${message}`,
       );
     }
+  }
+
+  /**
+   * Maps the LLM-chosen action string to the registered tool name.
+   * Handles legacy 'analyze' action by routing to the correct tool
+   * based on analysisType in state.
+   */
+  private resolveToolName(action: string | undefined): string {
+    if (!action) return 'swap'; // safe default
+
+    // Legacy 'analyze' action — route to specific tool via analysisType
+    if (action === 'analyze') {
+      return 'analyze_wallet'; // WalletAnalyzeTool; token branch handled via args
+    }
+
+    // Direct 1:1 mappings
+    const MAP: Record<string, string> = {
+      swap: 'swap',
+      transfer: 'transfer',
+      multi_send: 'multi_send',
+      stake: 'stake',
+      analyze_wallet: 'analyze_wallet',
+      analyze_token: 'analyze_token',
+    };
+
+    return MAP[action] ?? action;
+  }
+
+  /**
+   * Builds the args object to pass into the tool's execute() method,
+   * extracting the relevant fields from the parsed AgentState.
+   */
+  private buildToolArgs(state: AgentState): Record<string, unknown> {
+    const base: Record<string, unknown> = {
+      amountLamports: state.amountLamports ?? 0,
+      tokenIn: state.tokenIn,
+      tokenOut: state.tokenOut,
+      recipientPubkey: state.recipientPubkey,
+      recipients: state.recipients,
+      subject: state.analysisSubject ?? state.pubkey,
+    };
+
+    // For legacy 'analyze' intents, route to the correct analysis tool
+    if (state.action === 'analyze') {
+      base.subject = state.analysisSubject ?? state.pubkey;
+    }
+
+    return base;
   }
 }

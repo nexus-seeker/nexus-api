@@ -8,14 +8,14 @@ import {
 
 // Default policy applied during onboarding for new wallets
 const ONBOARD_DAILY_MAX_LAMPORTS = 1_000_000_000; // 1 SOL
-const ONBOARD_ALLOWED_PROTOCOLS = ['jupiter', 'raydium', 'spl_transfer'];
+const ONBOARD_ALLOWED_PROTOCOLS = ['jupiter', 'raydium', 'spl_transfer', 'multi_send', 'marinade'];
 const ONBOARD_IS_ACTIVE = true;
 
 @Injectable()
 export class PolicyService {
   private readonly logger = new Logger(PolicyService.name);
 
-  constructor(private readonly solanaService: SolanaService) {}
+  constructor(private readonly solanaService: SolanaService) { }
 
   async getPolicy(pubkey: string) {
     const owner = new PublicKey(pubkey);

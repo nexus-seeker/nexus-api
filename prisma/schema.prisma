@@ -74,3 +74,20 @@ model ReceiptCache {
   @@index([ownerPubkey, updatedAt])
   @@map("receipts_cache")
 }
+
+model UserMemory {
+  /// Solana wallet public key
+  pubkey             String   @id
+  /// Tokens the user frequently swaps (up to 10)
+  preferredTokens    String[]
+  /// Frequent recipient wallet addresses (up to 10)
+  frequentRecipients String[]
+  /// Rolling average trade size in SOL
+  avgTradeSizeSol    Float    @default(0)
+  /// Total number of agent runs
+  runCount           Int      @default(0)
+  /// Auto-updated on every write
+  lastSeenAt         DateTime @updatedAt
+
+  @@map("user_memory")
+}
