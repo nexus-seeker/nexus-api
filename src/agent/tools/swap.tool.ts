@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
-import type { NexusTool, ToolContext, ToolResult } from './tool.interface';
+import type { KawulaTool, ToolContext, ToolResult } from './tool.interface';
 import { buildTransactionNode, selectRouteNode } from '../graph';
 import type { AgentState } from '../state';
 
@@ -14,7 +14,7 @@ const MINT_MAP: Record<string, string> = {
 };
 
 @Injectable()
-export class SwapTool implements NexusTool {
+export class SwapTool implements KawulaTool {
     readonly name = 'swap';
 
     readonly description =

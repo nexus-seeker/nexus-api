@@ -41,7 +41,7 @@ export interface ToolResult {
 
 // ─── The tool contract every implementation must satisfy ───────────────────
 
-export interface NexusTool {
+export interface KawulaTool {
     /** Machine-readable name — used as the action key */
     readonly name: string;
     /** Human + LLM description */

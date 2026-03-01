@@ -18,7 +18,7 @@ export class SolanaService {
         const rpcUrl = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
         this.connection = new Connection(rpcUrl, 'confirmed');
         this.programId = new PublicKey(
-            process.env.NEXUS_PROGRAM_ID || '5twpBNVkDu9YkuQ2aDRWTB1wvA4wjBu42Q42kn7Fy2G5',
+            process.env.Kawula_PROGRAM_ID || '5twpBNVkDu9YkuQ2aDRWTB1wvA4wjBu42Q42kn7Fy2G5',
         );
         this.logger.log(`Solana RPC: ${rpcUrl}`);
         this.logger.log(`Program ID: ${this.programId.toBase58()}`);

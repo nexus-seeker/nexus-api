@@ -18,10 +18,10 @@ function toJupiterIx(programId: string, byte: number) {
 
 describe('TxAssemblerService', () => {
   const owner = new PublicKey('11111111111111111111111111111111');
-  const nexusProgramId = new PublicKey('DxV7vXf919YddC74X726PpsrPpHLXNZtdBsk6Lweh3HJ');
+  const kawulaProgramId = new PublicKey('DxV7vXf919YddC74X726PpsrPpHLXNZtdBsk6Lweh3HJ');
 
   const createSolanaMock = (overrides?: Partial<SolanaService>) => ({
-    getProgramId: jest.fn().mockReturnValue(nexusProgramId),
+    getProgramId: jest.fn().mockReturnValue(kawulaProgramId),
     findProfilePDA: jest.fn().mockReturnValue([owner, 255]),
     findPolicyPDA: jest.fn().mockReturnValue([owner, 255]),
     findReceiptPDA: jest.fn().mockReturnValue([owner, 255]),
@@ -122,7 +122,7 @@ describe('TxAssemblerService', () => {
 
     expect(buildCall[0]).toEqual(owner);
     expect(buildCall[2]).toEqual(resolvedAlts);
-    expect(passedInstructions[0].programId.toBase58()).toBe(nexusProgramId.toBase58());
+    expect(passedInstructions[0].programId.toBase58()).toBe(kawulaProgramId.toBase58());
 
     const checkIxData = Buffer.from(passedInstructions[0].data);
     const protocol = 'jupiter';
@@ -157,7 +157,7 @@ describe('TxAssemblerService', () => {
     expect(buildCall[0]).toEqual(owner);
     expect(buildCall[2]).toEqual([]);
     expect(passedInstructions).toHaveLength(2);
-    expect(passedInstructions[0].programId.toBase58()).toBe(nexusProgramId.toBase58());
+    expect(passedInstructions[0].programId.toBase58()).toBe(kawulaProgramId.toBase58());
     expect(passedInstructions[1].programId.toBase58()).toBe('11111111111111111111111111111111');
   });
 

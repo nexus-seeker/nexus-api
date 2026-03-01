@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
-import type { NexusTool, ToolContext, ToolResult } from './tool.interface';
+import type { KawulaTool, ToolContext, ToolResult } from './tool.interface';
 
 @Injectable()
-export class MarginfiLendTool implements NexusTool {
+export class MarginfiLendTool implements KawulaTool {
     name = 'marginfi_lend';
     description = 'Deposit SOL or USDC into Marginfi to earn yield/interest';
 

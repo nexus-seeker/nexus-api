@@ -1,4 +1,4 @@
-export type { NexusTool, ToolContext, ToolResult } from './tool.interface';
+export type { KawulaTool, ToolContext, ToolResult } from './tool.interface';
 export { ToolRegistry } from './tool.registry';
 export { SwapTool } from './swap.tool';
 export { SplTransferTool } from './spl-transfer.tool';

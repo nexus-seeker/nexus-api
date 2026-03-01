@@ -580,7 +580,7 @@ export async function synthesizeResponseNode(
     const response = await llm.invoke([
       {
         role: 'system',
-        content: `${memoryPrefix}You are a helpful Solana DeFi assistant named NEXUS.
+        content: `${memoryPrefix}You are a helpful Solana DeFi assistant named Kawula.
 Your job is to read the result of the tool the user just executed, and write a friendly, concise summary of what happened.
 
 Guidelines:
