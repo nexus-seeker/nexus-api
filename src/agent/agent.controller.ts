@@ -31,12 +31,15 @@ export class AgentController {
     ): Promise<ExecuteResponse | { error: string }> {
         const intent = body?.intent;
         const pubkey = body?.pubkey;
+        const threadId = body?.threadId?.trim();
 
         if (!intent || !pubkey) {
             return { error: 'Both intent and pubkey are required' };
         }
 
-        const result = this.agentService.startAgentRun(intent, pubkey);
+        const result = threadId
+            ? this.agentService.startAgentRun(intent, pubkey, threadId)
+            : this.agentService.startAgentRun(intent, pubkey);
         return result;
     }
 

@@ -21,14 +21,18 @@ export class HistoryProjectionService {
         await this.upsertRun(input, {
           status: 'started',
           intent: this.getStringField(input.payload, 'intent'),
+          threadId: this.getStringField(input.payload, 'threadId'),
         });
         return;
       case 'message_user':
-        await this.upsertRun(input, {});
+        await this.upsertRun(input, {
+          threadId: this.getStringField(input.payload, 'threadId'),
+        });
         await this.createMessage(input, 'user', this.getStringField(input.payload, 'content'));
         return;
       case 'step_emitted':
         await this.upsertRun(input, {
+          threadId: this.getStringField(input.payload, 'threadId'),
           latestStep: this.getStepPayload(input.payload),
         });
         return;
@@ -37,6 +41,7 @@ export class HistoryProjectionService {
           status: 'completed',
           completedAt: input.eventAt,
           intent: this.getStringField(input.payload, 'intent'),
+          threadId: this.getStringField(input.payload, 'threadId'),
           latestStep: this.getStepPayload(input.payload),
         });
         await this.createMessage(input, 'agent', this.getCompletionMessage(input.payload));
@@ -45,6 +50,7 @@ export class HistoryProjectionService {
         const reason = this.getStringField(input.payload, 'reason');
         await this.upsertRun(input, {
           status: 'rejected',
+          threadId: this.getStringField(input.payload, 'threadId'),
           rejectedReason: reason,
         });
         await this.createMessage(input, 'agent', reason);
@@ -62,9 +68,14 @@ export class HistoryProjectionService {
       latestStep?: Prisma.InputJsonValue;
       completedAt?: Date;
       rejectedReason?: string;
+      threadId?: string;
     },
   ): Promise<void> {
-    const createData: Prisma.AgentRunCreateInput = {
+    const resolvedThreadId = patch.threadId
+      ? await this.resolveThreadId(patch.threadId, input.pubkey, input.eventAt)
+      : undefined;
+
+    const createData: Prisma.AgentRunUncheckedCreateInput = {
       runId: input.runId,
       pubkey: input.pubkey,
       status: patch.status ?? 'started',
@@ -87,7 +98,11 @@ export class HistoryProjectionService {
       createData.rejectedReason = patch.rejectedReason;
     }
 
-    const updateData: Prisma.AgentRunUpdateInput = {
+    if (resolvedThreadId !== undefined) {
+      createData.threadId = resolvedThreadId;
+    }
+
+    const updateData: Prisma.AgentRunUncheckedUpdateManyInput = {
       lastEventSeq: input.seq,
     };
 
@@ -109,6 +124,10 @@ export class HistoryProjectionService {
 
     if (patch.rejectedReason !== undefined) {
       updateData.rejectedReason = patch.rejectedReason;
+    }
+
+    if (resolvedThreadId !== undefined) {
+      updateData.threadId = resolvedThreadId;
     }
 
     const where = {
@@ -157,6 +176,11 @@ export class HistoryProjectionService {
       return;
     }
 
+    const requestedThreadId = this.getStringField(input.payload, 'threadId');
+    const threadId = requestedThreadId
+      ? await this.resolveThreadId(requestedThreadId, input.pubkey, input.eventAt)
+      : undefined;
+
     await this.prisma.conversationMessage.upsert({
       where: {
         runId_seq: {
@@ -167,6 +191,7 @@ export class HistoryProjectionService {
       create: {
         runId: input.runId,
         pubkey: input.pubkey,
+        ...(threadId ? { threadId } : {}),
         seq: input.seq,
         role,
         content,
@@ -175,6 +200,61 @@ export class HistoryProjectionService {
       },
       update: {},
     });
+  }
+
+  private async resolveThreadId(
+    threadId: string,
+    pubkey: string,
+    eventAt: Date,
+  ): Promise<string | undefined> {
+    const existing = await this.prisma.conversationThread.findUnique({
+      where: { id: threadId },
+      select: { walletPubkey: true },
+    });
+
+    if (!existing) {
+      try {
+        await this.prisma.conversationThread.create({
+          data: {
+            id: threadId,
+            walletPubkey: pubkey,
+            createdAt: eventAt,
+            updatedAt: eventAt,
+          },
+        });
+        return threadId;
+      } catch (error) {
+        if (!this.isUniqueConstraintError(error)) {
+          throw error;
+        }
+      }
+
+      const raced = await this.prisma.conversationThread.findUnique({
+        where: { id: threadId },
+        select: { walletPubkey: true },
+      });
+
+      if (!raced || raced.walletPubkey !== pubkey) {
+        return undefined;
+      }
+
+      await this.prisma.conversationThread.update({
+        where: { id: threadId },
+        data: { updatedAt: eventAt },
+      });
+      return threadId;
+    }
+
+    if (existing.walletPubkey !== pubkey) {
+      return undefined;
+    }
+
+    await this.prisma.conversationThread.update({
+      where: { id: threadId },
+      data: { updatedAt: eventAt },
+    });
+
+    return threadId;
   }
 
   private getRecord(value: Prisma.InputJsonValue): Record<string, Prisma.InputJsonValue> | null {

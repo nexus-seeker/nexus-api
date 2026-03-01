@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { SemanticMemoryService } from './semantic-memory.service';
 
 export interface UserMemoryRecord {
     pubkey: string;
@@ -7,9 +8,13 @@ export interface UserMemoryRecord {
     frequentRecipients: string[];
     avgTradeSizeSol: number;
     runCount: number;
+    experienceLevel: string;
+    riskTolerance: string;
+    languageStyle: string;
 }
 
 export interface RunContext {
+    threadId?: string;
     tokenIn?: string;
     tokenOut?: string;
     amountSol?: number;
@@ -20,7 +25,10 @@ export interface RunContext {
 export class UserMemoryService {
     private readonly logger = new Logger(UserMemoryService.name);
 
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly semanticMemory?: SemanticMemoryService,
+    ) { }
 
     /**
      * Returns the user's memory record, creating a default one if it doesn't exist.
@@ -41,6 +49,9 @@ export class UserMemoryService {
                 frequentRecipients: [],
                 avgTradeSizeSol: 0,
                 runCount: 0,
+                experienceLevel: 'beginner',
+                riskTolerance: 'moderate',
+                languageStyle: 'casual',
             },
         });
     }
@@ -76,6 +87,14 @@ export class UserMemoryService {
                 totalRuns
                 : record.avgTradeSizeSol;
 
+            // Infer experience level from total runs
+            const experienceLevel =
+                totalRuns >= 50 ? 'expert' : totalRuns >= 10 ? 'intermediate' : 'beginner';
+
+            // Infer risk tolerance from average trade size
+            const riskTolerance =
+                newAvg >= 1.0 ? 'aggressive' : newAvg >= 0.1 ? 'moderate' : 'conservative';
+
             await this.prisma.userMemory.update({
                 where: { pubkey },
                 data: {
@@ -83,12 +102,53 @@ export class UserMemoryService {
                     frequentRecipients: newRecipients,
                     avgTradeSizeSol: newAvg,
                     runCount: totalRuns,
+                    experienceLevel,
+                    riskTolerance,
                 },
             });
+
+            const semanticChunk = this.buildSemanticChunkText(ctx);
+            if (semanticChunk && this.semanticMemory) {
+                await this.semanticMemory.storeChunk({
+                    wallet: pubkey,
+                    threadId: ctx.threadId,
+                    text: semanticChunk,
+                    metadata: {
+                        tokenIn: ctx.tokenIn,
+                        tokenOut: ctx.tokenOut,
+                        amountSol: ctx.amountSol,
+                        recipientPubkey: ctx.recipientPubkey,
+                    },
+                });
+            }
         } catch (err: any) {
             // Non-fatal — memory update failure doesn't block transaction flow
             this.logger.warn(`Failed to update user memory for ${pubkey}: ${err?.message}`);
         }
+    }
+
+    private buildSemanticChunkText(ctx: RunContext): string | null {
+        const parts: string[] = [];
+
+        if (ctx.tokenIn && ctx.tokenOut) {
+            parts.push(`User traded ${ctx.tokenIn} to ${ctx.tokenOut}`);
+        } else if (ctx.tokenOut) {
+            parts.push(`User preferred token ${ctx.tokenOut}`);
+        }
+
+        if (typeof ctx.amountSol === 'number' && Number.isFinite(ctx.amountSol) && ctx.amountSol > 0) {
+            parts.push(`Approximate size ${ctx.amountSol} SOL`);
+        }
+
+        if (ctx.recipientPubkey) {
+            parts.push(`Recipient ${ctx.recipientPubkey}`);
+        }
+
+        if (parts.length === 0) {
+            return null;
+        }
+
+        return parts.join('. ');
     }
 
     /**
@@ -96,6 +156,11 @@ export class UserMemoryService {
      */
     buildContextString(memory: UserMemoryRecord): string {
         const parts: string[] = [];
+
+        // Core profile fields for LLM personalization
+        parts.push(`Experience level: ${memory.experienceLevel}`);
+        parts.push(`Risk tolerance: ${memory.riskTolerance}`);
+        parts.push(`Preferred language style: ${memory.languageStyle}`);
 
         if (memory.preferredTokens.length > 0) {
             parts.push(`Preferred tokens: ${memory.preferredTokens.join(', ')}`);

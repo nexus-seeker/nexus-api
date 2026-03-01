@@ -1,7 +1,8 @@
-import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Optional, Query, UseGuards } from '@nestjs/common';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
-import type { HistoryResponse } from '../contracts/mvp';
+import type { ConversationThreadDto, HistoryResponse } from '../contracts/mvp';
 import { HistoryService } from './history.service';
+import { HistoryThreadsService } from './history-threads.service';
 
 const DEFAULT_LIMIT = 50;
 const MIN_LIMIT = 1;
@@ -10,7 +11,10 @@ const MAX_LIMIT = 100;
 @Controller('history')
 @UseGuards(ApiKeyGuard)
 export class HistoryController {
-  constructor(private readonly historyService: HistoryService) {}
+  constructor(
+    private readonly historyService: HistoryService,
+    @Optional() private readonly historyThreadsService?: HistoryThreadsService,
+  ) {}
 
   @Get()
   async getHistory(
@@ -55,6 +59,19 @@ export class HistoryController {
     }
 
     return this.historyService.getHistory(pubkey, normalizedLimit, parsedBeforeTs, parsedBeforeId);
+  }
+
+  @Get('threads')
+  async getThreads(@Query('pubkey') pubkey: string): Promise<ConversationThreadDto[]> {
+    if (typeof pubkey !== 'string' || pubkey.trim().length === 0) {
+      throw new BadRequestException('pubkey query parameter is required');
+    }
+
+    if (!this.historyThreadsService) {
+      return [];
+    }
+
+    return this.historyThreadsService.listThreads(pubkey);
   }
 
   private parseStrictInteger(value: string, errorMessage: string): number {

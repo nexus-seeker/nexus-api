@@ -92,6 +92,7 @@ export class HistoryService {
     role: string;
     content: string;
     runId: string;
+    threadId?: string | null;
     payload: unknown;
     eventAt: Date;
   }): MessageDto {
@@ -115,6 +116,7 @@ export class HistoryService {
       role: message.role,
       content: message.content,
       runId: message.runId,
+      ...(message.threadId ? { threadId: message.threadId } : {}),
       ...(steps !== undefined ? { steps } : {}),
       ...(rejection !== undefined ? { rejection } : {}),
       timestamp: message.eventAt.getTime(),

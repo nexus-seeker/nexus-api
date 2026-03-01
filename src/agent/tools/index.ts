@@ -7,3 +7,6 @@ export { MarinadeStakeTool } from './marinade-stake.tool';
 export { WalletAnalyzeTool } from './wallet-analyze.tool';
 export { TokenInfoTool } from './token-info.tool';
 export { MarginfiLendTool } from './marginfi-lend.tool';
+export { TokenSafetyTool } from './token-safety.tool';
+export { CompareYieldsTool } from './compare-yields.tool';
+export { GetPnlTool } from './get-pnl.tool';

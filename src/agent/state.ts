@@ -3,11 +3,34 @@ import type { ExecuteResponse, StepEvent } from '../contracts/mvp';
 export type AgentRunResult = ExecuteResponse;
 export type { StepEvent } from '../contracts/mvp';
 
+// The 6 canonical intent classes from the NEXUS Agent System Design v3.0.
+export type IntentClass =
+  | 'casual'
+  | 'read'
+  | 'action'
+  | 'safety'
+  | 'learn'
+  | 'complex';
+
+export interface MarketContext {
+  solPrice: number;
+  solChange24h: number;
+  networkCongestion: 'low' | 'medium' | 'high';
+  avgTxFeeSOL: number;
+}
+
 export interface AgentState {
   // Input
   intent: string;
   pubkey: string;
+  threadId?: string;
   runId: string;
+
+  // Intent classification (set early in the pipeline)
+  intentClass?: IntentClass;
+
+  // Market snapshot (injected for casual/complex flows)
+  marketContext?: MarketContext;
 
   // Parsed
   action?: string;

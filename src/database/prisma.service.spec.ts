@@ -45,7 +45,7 @@ describe('PrismaService', () => {
   });
 
   it('skips connection when DATABASE_URL is missing in test environment', async () => {
-    delete process.env.DATABASE_URL;
+    process.env.DATABASE_URL = '';
     process.env.NODE_ENV = 'test';
 
     const service = new PrismaService();
