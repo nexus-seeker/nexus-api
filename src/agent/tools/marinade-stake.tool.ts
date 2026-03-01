@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import type { NexusTool, ToolContext, ToolResult } from './tool.interface';
+import type { KawulaTool, ToolContext, ToolResult } from './tool.interface';
 
 @Injectable()
-export class MarinadeStakeTool implements NexusTool {
+export class MarinadeStakeTool implements KawulaTool {
     readonly name = 'stake';
 
     readonly description =

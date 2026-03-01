@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
-import type { NexusTool, ToolContext, ToolResult } from './tool.interface';
+import type { KawulaTool, ToolContext, ToolResult } from './tool.interface';
 
 @Injectable()
-export class SplTransferTool implements NexusTool {
+export class SplTransferTool implements KawulaTool {
     readonly name = 'transfer';
 
     readonly description =

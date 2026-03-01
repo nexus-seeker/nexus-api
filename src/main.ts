@@ -20,8 +20,8 @@ async function bootstrap() {
 
   // Swagger setup
   const config = new DocumentBuilder()
-    .setTitle('Nexus Agentic API')
-    .setDescription('The API documentation for the LangGraph-powered Nexus Agent')
+    .setTitle('Kawula Agentic API')
+    .setDescription('The API documentation for the LangGraph-powered Kawula Agent')
     .setVersion('1.0')
     .addTag('intent')
     .build();
@@ -31,6 +31,6 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
-  console.log(`🚀 NEXUS Agent Backend running on port ${port}`);
+  console.log(`🚀 Kawula Agent Backend running on port ${port}`);
 }
 bootstrap();

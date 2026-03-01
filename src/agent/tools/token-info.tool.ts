@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import type { NexusTool, ToolContext, ToolResult } from './tool.interface';
+import type { KawulaTool, ToolContext, ToolResult } from './tool.interface';
 
 @Injectable()
-export class TokenInfoTool implements NexusTool {
+export class TokenInfoTool implements KawulaTool {
     readonly name = 'analyze_token';
 
     readonly description =

@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import type { NexusTool, ToolContext, ToolResult } from './tool.interface';
+import type { KawulaTool, ToolContext, ToolResult } from './tool.interface';
 
 @Injectable()
-export class WalletAnalyzeTool implements NexusTool {
+export class WalletAnalyzeTool implements KawulaTool {
     readonly name = 'analyze_wallet';
 
     readonly description =

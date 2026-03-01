@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { NexusTool, ToolContext, ToolResult } from './tool.interface';
+import type { KawulaTool, ToolContext, ToolResult } from './tool.interface';
 
 /**
  * ToolRegistry — the heart of the tool-calling architecture.
@@ -11,22 +11,22 @@ import type { NexusTool, ToolContext, ToolResult } from './tool.interface';
 @Injectable()
 export class ToolRegistry {
     private readonly logger = new Logger(ToolRegistry.name);
-    private readonly tools = new Map<string, NexusTool>();
+    private readonly tools = new Map<string, KawulaTool>();
 
     /**
      * Register a tool. Called once at module init per tool provider.
      * Tool names are the same strings the LLM returns from parseIntentNode.
      */
-    register(tool: NexusTool): void {
+    register(tool: KawulaTool): void {
         this.tools.set(tool.name, tool);
         this.logger.log(`Registered tool: ${tool.name}`);
     }
 
-    get(name: string): NexusTool | undefined {
+    get(name: string): KawulaTool | undefined {
         return this.tools.get(name);
     }
 
-    getAll(): NexusTool[] {
+    getAll(): KawulaTool[] {
         return [...this.tools.values()];
     }
 
