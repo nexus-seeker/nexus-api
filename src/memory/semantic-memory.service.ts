@@ -41,16 +41,37 @@ interface SemanticMemoryRow {
 
 @Injectable()
 export class SemanticMemoryService {
-  private readonly embeddings: OpenAIEmbeddings;
+  private readonly embeddings: OpenAIEmbeddings | null;
+  private readonly enabled: boolean;
 
   constructor(private readonly prisma: PrismaService) {
-    this.embeddings = new OpenAIEmbeddings({
-      apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL,
-    });
+    // Embeddings use their own keys, completely independent from the chat LLM.
+    // Priority: EMBEDDING_API_KEY → OPENAI_API_KEY (fallback for backwards compat)
+    const apiKey = process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY;
+    const model = process.env.EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
+
+    if (apiKey) {
+      this.embeddings = new OpenAIEmbeddings({
+        apiKey,
+        model,
+        // Allow pointing at any OpenAI-compatible embedding endpoint
+        ...(process.env.EMBEDDING_BASE_URL
+          ? { configuration: { baseURL: process.env.EMBEDDING_BASE_URL } }
+          : {}),
+      });
+      this.enabled = true;
+    } else {
+      this.embeddings = null;
+      this.enabled = false;
+      console.warn(
+        '[SemanticMemoryService] No embedding key found (EMBEDDING_API_KEY / OPENAI_API_KEY not set). ' +
+        'Semantic memory is disabled. Set EMBEDDING_API_KEY in .env to enable.',
+      );
+    }
   }
 
   async storeChunk(input: StoreChunkInput): Promise<void> {
+    if (!this.enabled || !this.embeddings) return;
     const embedding = await this.embeddings.embedQuery(input.text);
     this.assertEmbeddingDimension(embedding);
     const vectorLiteral = this.toVectorLiteral(embedding);
@@ -63,6 +84,7 @@ export class SemanticMemoryService {
   }
 
   async search(input: SearchInput): Promise<SemanticMemoryChunk[]> {
+    if (!this.enabled || !this.embeddings) return [];
     const embedding = await this.embeddings.embedQuery(input.query);
     this.assertEmbeddingDimension(embedding);
     const vectorLiteral = this.toVectorLiteral(embedding);
