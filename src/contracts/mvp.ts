@@ -1,7 +1,10 @@
 export interface ExecuteRequest {
   intent: string;
   pubkey: string;
+  threadId?: string;
 }
+
+export const EXECUTE_REQUEST_OPTIONAL_FIELDS = ['threadId'] as const;
 
 export type StepNode =
   | 'parse_intent'
@@ -14,13 +17,21 @@ export type StepNode =
   | 'multi_send'
   | 'analyze'
   | 'synthesize_response'
-  | 'error';
+  | 'error'
+  // ── NEXUS v3.0 intent-class routing nodes ──
+  | 'classify_intent'
+  | 'casual_reply'
+  | 'safety_check'
+  | 'safety_response'
+  | 'learn_response'
+  | 'complex_plan'
+  | 'anomaly_check';
 
 export interface StepEvent {
   node: StepNode;
   label: string;
   status: 'running' | 'success' | 'rejected';
-  payload?: unknown;
+  payload?: Record<string, unknown>;
 }
 
 export interface PolicyDto {
@@ -69,6 +80,7 @@ export interface MessageDto {
   role: string;
   content: string;
   runId: string;
+  threadId?: string;
   steps?: unknown[];
   rejection?: {
     reason: string;
@@ -81,6 +93,65 @@ export interface HistoryResponse {
   messages: MessageDto[];
   nextCursor?: number;
   nextCursorId?: string;
+}
+
+export interface ConversationThreadDto {
+  id: string;
+  // API-level wallet identifier. Storage may use walletPubkey internally.
+  pubkey: string;
+  title?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProactiveRecommendationActionDto {
+  id: string;
+  label: string;
+  type: 'open' | 'approve' | 'reject' | 'ignore';
+  payload?: Record<string, unknown>;
+}
+
+export interface ProactiveRecommendationDto {
+  id: string;
+  // API-level wallet identifier. Storage may use walletPubkey internally.
+  pubkey: string;
+  threadId?: string;
+  title: string;
+  summary: string;
+  confidence: number;
+  status: 'pending' | 'approved' | 'rejected' | 'ignored';
+  actions: ProactiveRecommendationActionDto[];
+  createdAt: number;
+}
+
+export const PROACTIVE_RECOMMENDATION_REQUIRED_FIELDS = [
+  'confidence',
+  'status',
+  'actions',
+] as const;
+
+export const PROACTIVE_RECOMMENDATION_STATUSES = [
+  'pending',
+  'approved',
+  'rejected',
+  'ignored',
+] as const;
+
+export const RECOMMENDATION_FEEDBACK_OUTCOMES = [
+  'approved',
+  'rejected',
+  'ignored',
+] as const;
+
+export interface ProactiveFeedResponse {
+  recommendations: ProactiveRecommendationDto[];
+  nextCursor?: number;
+}
+
+export interface RecommendationFeedbackRequest {
+  outcome?: 'approved' | 'rejected' | 'ignored';
+  interaction?: 'opened';
+  reason?: string;
 }
 
 export type SSEMessage =

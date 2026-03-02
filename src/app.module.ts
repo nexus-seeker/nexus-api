@@ -8,6 +8,7 @@ import { ReceiptsModule } from './receipts/receipts.module';
 import { DatabaseModule } from './database/database.module';
 import { HistoryModule } from './history/history.module';
 import { MemoryModule } from './memory/memory.module';
+import { ProactiveModule } from './proactive/proactive.module';
 
 @Module({
   imports: [
@@ -18,9 +19,9 @@ import { MemoryModule } from './memory/memory.module';
     ReceiptsModule,
     HistoryModule,
     MemoryModule,
+    ProactiveModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule { }
-

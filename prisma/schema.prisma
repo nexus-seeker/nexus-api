@@ -7,6 +7,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum ProactiveRecommendationStatus {
+  pending
+  approved
+  rejected
+  ignored
+}
+
+enum NotificationDeliveryStatus {
+  queued
+  sent
+  failed
+}
+
+enum RecommendationOutcome {
+  approved
+  rejected
+  ignored
+}
+
 model RunEvent {
   id        String   @id @default(cuid())
   runId     String
@@ -23,6 +42,7 @@ model RunEvent {
 model AgentRun {
   runId          String                @id
   pubkey         String
+  threadId       String?
   status         String
   intent         String?
   latestStep     Json?
@@ -32,8 +52,10 @@ model AgentRun {
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
   messages       ConversationMessage[]
+  thread         ConversationThread?   @relation(fields: [threadId], references: [id], onDelete: SetNull)
 
   @@index([pubkey, updatedAt])
+  @@index([threadId, updatedAt])
   @@map("agent_runs")
 }
 
@@ -41,6 +63,7 @@ model ConversationMessage {
   id        String   @id @default(cuid())
   runId     String
   pubkey    String
+  threadId  String?
   seq       Int
   role      String
   content   String
@@ -48,11 +71,104 @@ model ConversationMessage {
   eventAt   DateTime
   createdAt DateTime @default(now())
   agentRun  AgentRun @relation(fields: [runId], references: [runId], onDelete: Cascade)
+  thread    ConversationThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
 
   @@unique([runId, seq])
   @@index([pubkey, eventAt])
   @@index([pubkey, createdAt])
+  @@index([threadId, createdAt])
   @@map("conversation_messages")
+}
+
+model ConversationThread {
+  id               String                  @id @default(cuid())
+  /// DB-level wallet identifier. API contracts expose this as `pubkey`.
+  walletPubkey     String
+  title            String?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  runs             AgentRun[]
+  messages         ConversationMessage[]
+  proactiveEvents  ProactiveEvent[]
+  recommendations  ProactiveRecommendation[]
+
+  @@index([walletPubkey, updatedAt])
+  @@map("conversation_threads")
+}
+
+model ProactiveEvent {
+  id               String                    @id @default(cuid())
+  /// DB-level wallet identifier. API contracts expose this as `pubkey`.
+  walletPubkey     String
+  threadId         String?
+  source           String
+  sourceEventId    String
+  kind             String
+  eventAt          DateTime
+  payload          Json
+  createdAt        DateTime                  @default(now())
+  thread           ConversationThread?       @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  recommendations  ProactiveRecommendation[]
+
+  @@unique([source, sourceEventId])
+  @@index([walletPubkey, eventAt])
+  @@index([threadId, createdAt])
+  @@map("proactive_events")
+}
+
+model ProactiveRecommendation {
+  id            String                          @id @default(cuid())
+  /// DB-level wallet identifier. API contracts expose this as `pubkey`.
+  walletPubkey  String
+  threadId      String?
+  eventId       String?
+  title         String
+  summary       String
+  confidence    Float
+  status        ProactiveRecommendationStatus
+  actions       Json
+  createdAt     DateTime                        @default(now())
+  updatedAt     DateTime                        @updatedAt
+  thread        ConversationThread?             @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  event         ProactiveEvent?                 @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  deliveries    NotificationDelivery[]
+  feedback      RecommendationFeedback[]
+
+  @@index([walletPubkey, createdAt])
+  @@index([threadId, createdAt])
+  @@index([status, createdAt])
+  @@map("proactive_recommendations")
+}
+
+model NotificationDelivery {
+  id                 String                  @id @default(cuid())
+  recommendationId   String
+  channel            String
+  status             NotificationDeliveryStatus
+  providerMessageId  String?
+  error              String?
+  createdAt          DateTime                @default(now())
+  sentAt             DateTime?
+  recommendation     ProactiveRecommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+
+  @@index([recommendationId, createdAt])
+  @@index([status, createdAt])
+  @@map("notification_deliveries")
+}
+
+model RecommendationFeedback {
+  id                String                  @id @default(cuid())
+  recommendationId  String
+  /// DB-level wallet identifier. API contracts expose this as `pubkey`.
+  walletPubkey      String
+  outcome           RecommendationOutcome
+  reason            String?
+  createdAt         DateTime                @default(now())
+  recommendation    ProactiveRecommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+
+  @@index([recommendationId, createdAt])
+  @@index([walletPubkey, createdAt])
+  @@map("recommendation_feedback")
 }
 
 model ReceiptCache {
@@ -86,6 +202,12 @@ model UserMemory {
   avgTradeSizeSol    Float    @default(0)
   /// Total number of agent runs
   runCount           Int      @default(0)
+  /// Inferred experience level: beginner | intermediate | expert
+  experienceLevel    String   @default("beginner")
+  /// Inferred risk tolerance: conservative | moderate | aggressive
+  riskTolerance      String   @default("moderate")
+  /// Preferred language style: casual | technical | brief
+  languageStyle      String   @default("casual")
   /// Auto-updated on every write
   lastSeenAt         DateTime @updatedAt
 

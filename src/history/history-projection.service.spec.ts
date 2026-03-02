@@ -11,6 +11,11 @@ describe('HistoryProjectionService', () => {
       conversationMessage: {
         upsert: jest.fn(),
       },
+      conversationThread: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(undefined),
+        update: jest.fn().mockResolvedValue(undefined),
+      },
     } as unknown as PrismaService;
 
     return {
@@ -238,6 +243,30 @@ describe('HistoryProjectionService', () => {
         }),
       }),
     );
+  });
+
+  it('ignores thread association when thread belongs to another wallet', async () => {
+    const { prisma, service } = createService();
+    (prisma.conversationThread.findUnique as jest.Mock).mockResolvedValue({
+      id: 'thread-foreign',
+      walletPubkey: 'other-wallet',
+    });
+
+    await service.project({
+      runId: 'run-1',
+      pubkey: 'wallet-a',
+      type: 'message_user',
+      seq: 2,
+      eventAt: new Date('2026-02-28T12:01:00.000Z'),
+      payload: { content: 'hello', threadId: 'thread-foreign' },
+    });
+
+    expect(prisma.conversationMessage.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.not.objectContaining({ threadId: 'thread-foreign' }),
+      }),
+    );
+    expect(prisma.conversationThread.update).not.toHaveBeenCalled();
   });
 
   it('handles create races by retrying conditional update after unique conflicts', async () => {

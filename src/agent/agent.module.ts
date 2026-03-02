@@ -19,7 +19,12 @@ import { MarinadeStakeTool } from './tools/marinade-stake.tool';
 import { WalletAnalyzeTool } from './tools/wallet-analyze.tool';
 import { TokenInfoTool } from './tools/token-info.tool';
 import { MarginfiLendTool } from './tools/marginfi-lend.tool';
+import { TokenSafetyTool } from './tools/token-safety.tool';
+import { CompareYieldsTool } from './tools/compare-yields.tool';
+import { GetPnlTool } from './tools/get-pnl.tool';
 import { NameResolutionService } from './name-resolution.service';
+import { IntentClassifierService } from './intent-classifier.service';
+import { MarketContextService } from './market-context.service';
 
 const TOOL_PROVIDERS = [
   SwapTool,
@@ -29,6 +34,9 @@ const TOOL_PROVIDERS = [
   WalletAnalyzeTool,
   TokenInfoTool,
   MarginfiLendTool,
+  TokenSafetyTool,
+  CompareYieldsTool,
+  GetPnlTool,
 ];
 
 @Module({
@@ -42,6 +50,8 @@ const TOOL_PROVIDERS = [
     HistoryEventsService,
     HistoryProjectionService,
     NameResolutionService,
+    IntentClassifierService,
+    MarketContextService,
     ToolRegistry,
     ...TOOL_PROVIDERS,
   ],
@@ -53,6 +63,8 @@ const TOOL_PROVIDERS = [
     HistoryEventsService,
     HistoryProjectionService,
     NameResolutionService,
+    IntentClassifierService,
+    MarketContextService,
     ToolRegistry,
   ],
 })
@@ -66,10 +78,12 @@ export class AgentModule implements OnModuleInit {
     private readonly walletAnalyzeTool: WalletAnalyzeTool,
     private readonly tokenInfoTool: TokenInfoTool,
     private readonly marginfiLendTool: MarginfiLendTool,
+    private readonly tokenSafetyTool: TokenSafetyTool,
+    private readonly compareYieldsTool: CompareYieldsTool,
+    private readonly getPnlTool: GetPnlTool,
   ) { }
 
   onModuleInit(): void {
-    // Auto-register all tools with the registry at startup
     for (const tool of [
       this.swapTool,
       this.splTransferTool,
@@ -78,6 +92,9 @@ export class AgentModule implements OnModuleInit {
       this.walletAnalyzeTool,
       this.tokenInfoTool,
       this.marginfiLendTool,
+      this.tokenSafetyTool,
+      this.compareYieldsTool,
+      this.getPnlTool,
     ]) {
       this.toolRegistry.register(tool);
     }

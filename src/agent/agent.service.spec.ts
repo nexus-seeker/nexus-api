@@ -7,6 +7,8 @@ import { SolanaService } from '../solana/solana.service';
 import { HistoryEventsService } from '../history/history-events.service';
 import { HistoryProjectionService } from '../history/history-projection.service';
 import { ToolRegistry } from './tools/tool.registry';
+import { IntentClassifierService } from './intent-classifier.service';
+import { MarketContextService } from './market-context.service';
 import {
   parseIntentNode,
   buildTransactionNode,
@@ -68,9 +70,21 @@ describe('AgentService', () => {
     fetchAgentProfile: jest.fn().mockResolvedValue({ owner: '11111111111111111111111111111111' }),
   } as unknown as SolanaService;
 
+  // Intent classifier — default returns 'action' so existing action-pipeline tests pass unchanged
+  const mockIntentClassifier = {
+    classify: jest.fn().mockResolvedValue('action'),
+  } as unknown as IntentClassifierService;
+
+  // Market context stub
+  const mockMarketContext = {
+    getContext: jest.fn().mockResolvedValue({ solPrice: 150, solChange24h: 2.5, networkCongestion: 'low', avgTxFeeSOL: 0.000005 }),
+    formatForLlm: jest.fn().mockReturnValue('SOL: $150 (+2.5%)'),
+  } as unknown as MarketContextService;
+
   beforeEach(() => {
     jest.clearAllMocks();
     (mockSolanaService.fetchAgentProfile as jest.Mock).mockResolvedValue({ owner: '11111111111111111111111111111111' });
+    (mockIntentClassifier.classify as jest.Mock).mockResolvedValue('action');
     // Default: selectRouteNode returns jupiter
     (selectRouteNode as jest.Mock).mockResolvedValue({
       selectedProtocol: 'jupiter',
@@ -108,7 +122,7 @@ describe('AgentService', () => {
         stepEvent: { node: 'build_transaction', status: 'rejected', label: 'Empty tx' },
       });
 
-      const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+      const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
       (parseIntentNode as jest.Mock).mockResolvedValue({
         action: 'swap',
@@ -141,7 +155,7 @@ describe('AgentService', () => {
       stepEvent: { node: 'build_transaction', status: 'rejected', label: 'Missing Jupiter instructions' },
     });
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -182,7 +196,7 @@ describe('AgentService', () => {
       getSchemaForLlm: jest.fn().mockReturnValue(''),
     } as unknown as ToolRegistry;
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, failingToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, failingToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -219,7 +233,7 @@ describe('AgentService', () => {
       stepEvent: { node: 'tool_executor', status: 'rejected', label: 'Tool error: Unknown tool execution error' },
     });
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -253,7 +267,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -300,7 +314,7 @@ describe('AgentService', () => {
       fetchAgentProfile: jest.fn().mockResolvedValue(null),
     } as unknown as SolanaService;
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, notOnboardedSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, notOnboardedSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -343,7 +357,7 @@ describe('AgentService', () => {
       stepEvent: { node: 'build_transaction', status: 'success', label: 'Swap done' },
     });
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -379,7 +393,7 @@ describe('AgentService', () => {
       stepEvent: { node: 'build_transaction', status: 'success', label: 'Transfer prepared' },
     });
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'transfer',
@@ -413,7 +427,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -440,7 +454,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
@@ -485,17 +499,11 @@ describe('AgentService', () => {
     const historyEvents = createHistoryEventsMock();
     const historyProjection = createHistoryProjectionMock();
 
-    (historyEvents.append as jest.Mock)
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 1, eventType: 'run_started', createdAt: new Date('2026-02-28T12:00:00.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 2, eventType: 'message_user', createdAt: new Date('2026-02-28T12:00:01.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 3, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:02.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 4, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:03.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 5, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:04.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 6, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:05.000Z') })
-      // select_route step (added by selectRouteNode mock)
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 7, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:06.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 8, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:00:07.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-1', pubkey: 'pk', seq: 9, eventType: 'run_completed', createdAt: new Date('2026-02-28T12:00:08.000Z') });
+    let seq = 0;
+    (historyEvents.append as jest.Mock).mockImplementation(({ runId, pubkey: pk, type, payload }) => {
+      seq += 1;
+      return Promise.resolve({ runId: runId ?? 'run-1', pubkey: pk ?? 'pk', seq, eventType: type, createdAt: new Date('2026-02-28T12:00:00.000Z'), payload });
+    });
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -505,6 +513,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -526,7 +536,12 @@ describe('AgentService', () => {
     expect(historyEvents.append).toHaveBeenNthCalledWith(1, expect.objectContaining({ type: 'run_started' }));
     expect(historyEvents.append).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: 'message_user' }));
     expect(historyEvents.append).toHaveBeenCalledWith(expect.objectContaining({ type: 'step_emitted' }));
-    expect(historyEvents.append).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run_completed' }));
+    expect(historyEvents.append).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'run_completed',
+        payload: expect.objectContaining({ response: 'Mocked conversational response' }),
+      }),
+    );
     expect(historyProjection.project).toHaveBeenCalledTimes((historyEvents.append as jest.Mock).mock.calls.length);
   });
 
@@ -546,12 +561,11 @@ describe('AgentService', () => {
     const historyEvents = createHistoryEventsMock();
     const historyProjection = createHistoryProjectionMock();
 
-    (historyEvents.append as jest.Mock)
-      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 1, eventType: 'run_started', createdAt: new Date('2026-02-28T12:10:00.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 2, eventType: 'message_user', createdAt: new Date('2026-02-28T12:10:01.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 3, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:10:02.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 4, eventType: 'step_emitted', createdAt: new Date('2026-02-28T12:10:03.000Z') })
-      .mockResolvedValueOnce({ runId: 'run-2', pubkey: 'pk', seq: 5, eventType: 'run_rejected', createdAt: new Date('2026-02-28T12:10:04.000Z') });
+    let seq2 = 0;
+    (historyEvents.append as jest.Mock).mockImplementation(({ runId, pubkey: pk, type, payload }) => {
+      seq2 += 1;
+      return Promise.resolve({ runId: runId ?? 'run-2', pubkey: pk ?? 'pk', seq: seq2, eventType: type, createdAt: new Date('2026-02-28T12:10:00.000Z'), payload });
+    });
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -561,6 +575,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -592,7 +608,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     const parseStep = {
       type: 'step',
@@ -708,6 +724,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -787,6 +805,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -878,6 +898,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -961,6 +983,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       historyEvents,
       historyProjection,
     ) as AgentService;
@@ -1005,7 +1029,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockRejectedValue(new Error('parse exploded'));
 
@@ -1049,7 +1073,7 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry);
+    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
 
     (parseIntentNode as jest.Mock).mockReturnValue(parsePromise);
 
@@ -1118,6 +1142,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       undefined,
       undefined,
       undefined,
@@ -1180,6 +1206,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       undefined,
       undefined,
       undefined,
@@ -1247,6 +1275,8 @@ describe('AgentService', () => {
       mockSolanaService,
       mockRouteSelectorService,
       mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
       undefined,
       undefined,
       undefined,
