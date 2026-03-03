@@ -28,7 +28,11 @@ export class HistoryProjectionService {
         await this.upsertRun(input, {
           threadId: this.getStringField(input.payload, 'threadId'),
         });
-        await this.createMessage(input, 'user', this.getStringField(input.payload, 'content'));
+        await this.createMessage(
+          input,
+          'user',
+          this.getStringField(input.payload, 'content'),
+        );
         return;
       case 'step_emitted':
         await this.upsertRun(input, {
@@ -44,16 +48,21 @@ export class HistoryProjectionService {
           threadId: this.getStringField(input.payload, 'threadId'),
           latestStep: this.getStepPayload(input.payload),
         });
-        await this.createMessage(input, 'agent', this.getCompletionMessage(input.payload));
+        await this.createMessage(
+          input,
+          'agent',
+          this.getCompletionMessage(input.payload),
+        );
         return;
       case 'run_rejected':
         const reason = this.getStringField(input.payload, 'reason');
+        const response = this.getStringField(input.payload, 'response');
         await this.upsertRun(input, {
           status: 'rejected',
           threadId: this.getStringField(input.payload, 'threadId'),
           rejectedReason: reason,
         });
-        await this.createMessage(input, 'agent', reason);
+        await this.createMessage(input, 'agent', response ?? reason);
         return;
       default:
         return;
@@ -178,7 +187,11 @@ export class HistoryProjectionService {
 
     const requestedThreadId = this.getStringField(input.payload, 'threadId');
     const threadId = requestedThreadId
-      ? await this.resolveThreadId(requestedThreadId, input.pubkey, input.eventAt)
+      ? await this.resolveThreadId(
+          requestedThreadId,
+          input.pubkey,
+          input.eventAt,
+        )
       : undefined;
 
     await this.prisma.conversationMessage.upsert({
@@ -257,7 +270,9 @@ export class HistoryProjectionService {
     return threadId;
   }
 
-  private getRecord(value: Prisma.InputJsonValue): Record<string, Prisma.InputJsonValue> | null {
+  private getRecord(
+    value: Prisma.InputJsonValue,
+  ): Record<string, Prisma.InputJsonValue> | null {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
       return null;
     }
@@ -265,7 +280,10 @@ export class HistoryProjectionService {
     return value as Record<string, Prisma.InputJsonValue>;
   }
 
-  private getStringField(value: Prisma.InputJsonValue, key: string): string | undefined {
+  private getStringField(
+    value: Prisma.InputJsonValue,
+    key: string,
+  ): string | undefined {
     const record = this.getRecord(value);
     const fieldValue = record?.[key];
 
@@ -276,7 +294,9 @@ export class HistoryProjectionService {
     return fieldValue;
   }
 
-  private getStepPayload(value: Prisma.InputJsonValue): Prisma.InputJsonValue | undefined {
+  private getStepPayload(
+    value: Prisma.InputJsonValue,
+  ): Prisma.InputJsonValue | undefined {
     const record = this.getRecord(value);
     if (!record) {
       return undefined;
@@ -295,7 +315,12 @@ export class HistoryProjectionService {
     return steps[steps.length - 1];
   }
 
-  private getCompletionMessage(payload: Prisma.InputJsonValue): string | undefined {
-    return this.getStringField(payload, 'response') ?? this.getStringField(payload, 'message');
+  private getCompletionMessage(
+    payload: Prisma.InputJsonValue,
+  ): string | undefined {
+    return (
+      this.getStringField(payload, 'response') ??
+      this.getStringField(payload, 'message')
+    );
   }
 }

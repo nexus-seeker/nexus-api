@@ -31,10 +31,13 @@ jest.mock('./app.module', () => ({
 
 describe('main bootstrap', () => {
   it('registers RpcErrorFilter globally', async () => {
+    const logger = { log: jest.fn() };
     const app = {
       enableCors: jest.fn(),
+      get: jest.fn(() => logger),
       useGlobalPipes: jest.fn(),
       useGlobalFilters: jest.fn(),
+      useLogger: jest.fn(),
       setGlobalPrefix: jest.fn(),
       listen: jest.fn().mockResolvedValue(undefined),
     };
@@ -50,6 +53,8 @@ describe('main bootstrap', () => {
 
     const [registeredFilter] = app.useGlobalFilters.mock.calls[0];
     expect(registeredFilter.constructor.name).toBe('RpcErrorFilter');
+    expect(app.get).toHaveBeenCalled();
+    expect(app.useLogger).toHaveBeenCalledWith(logger);
     expect(app.setGlobalPrefix).not.toHaveBeenCalled();
     expect(SwaggerModule.setup).toHaveBeenCalled();
   });

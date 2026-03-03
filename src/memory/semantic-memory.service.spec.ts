@@ -10,7 +10,8 @@ jest.mock('@langchain/openai', () => ({
 }));
 
 describe('SemanticMemoryService', () => {
-  const fullEmbedding = () => Array.from({ length: 1536 }, (_, index) => index / 1000);
+  const fullEmbedding = () =>
+    Array.from({ length: 1536 }, (_, index) => index / 1000);
 
   beforeEach(() => {
     jest.clearAllMocks();

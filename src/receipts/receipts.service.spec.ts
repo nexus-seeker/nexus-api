@@ -31,7 +31,10 @@ describe('ReceiptsService', () => {
 
     const service = new ReceiptsService(prisma, reconciler);
 
-    const receipts = await service.getReceipts('11111111111111111111111111111111', 20);
+    const receipts = await service.getReceipts(
+      '11111111111111111111111111111111',
+      20,
+    );
 
     expect(receipts[0]?.amountLamports).toBe(9000);
   });
@@ -64,8 +67,8 @@ describe('ReceiptsService', () => {
 
     const service = new ReceiptsService(prisma, reconciler);
 
-    await expect(service.getReceipts('11111111111111111111111111111111', 20)).rejects.toThrow(
-      'amountLamports exceeds MAX_SAFE_INTEGER',
-    );
+    await expect(
+      service.getReceipts('11111111111111111111111111111111', 20),
+    ).rejects.toThrow('amountLamports exceeds MAX_SAFE_INTEGER');
   });
 });

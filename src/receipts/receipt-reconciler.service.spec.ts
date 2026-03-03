@@ -33,7 +33,10 @@ describe('ReceiptReconcilerService', () => {
 
     await service.syncOwner(owner);
 
-    expect(solana.fetchReceiptsByOwner).toHaveBeenCalledWith(expect.any(PublicKey), 20);
+    expect(solana.fetchReceiptsByOwner).toHaveBeenCalledWith(
+      expect.any(PublicKey),
+      20,
+    );
     expect(prisma.receiptCache.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { address: mockReceipt.address },
@@ -55,7 +58,9 @@ describe('ReceiptReconcilerService', () => {
     } as unknown as PrismaService;
 
     const service = new ReceiptReconcilerService(prisma, solana);
-    const syncRecentOwnersSpy = jest.spyOn(service, 'syncRecentOwners').mockResolvedValue(undefined);
+    const syncRecentOwnersSpy = jest
+      .spyOn(service, 'syncRecentOwners')
+      .mockResolvedValue(undefined);
 
     (service as { onModuleInit: () => void }).onModuleInit();
     jest.advanceTimersByTime(60_000);
@@ -78,7 +83,9 @@ describe('ReceiptReconcilerService', () => {
     } as unknown as PrismaService;
 
     const service = new ReceiptReconcilerService(prisma, solana);
-    const syncRecentOwnersSpy = jest.spyOn(service, 'syncRecentOwners').mockResolvedValue(undefined);
+    const syncRecentOwnersSpy = jest
+      .spyOn(service, 'syncRecentOwners')
+      .mockResolvedValue(undefined);
 
     (service as { onModuleInit: () => void }).onModuleInit();
     jest.advanceTimersByTime(60_000);
@@ -106,7 +113,9 @@ describe('ReceiptReconcilerService', () => {
 
     const service = new ReceiptReconcilerService(prisma, solana);
     const pendingSync = new Promise<void>(() => {});
-    const syncRecentOwnersSpy = jest.spyOn(service, 'syncRecentOwners').mockReturnValue(pendingSync);
+    const syncRecentOwnersSpy = jest
+      .spyOn(service, 'syncRecentOwners')
+      .mockReturnValue(pendingSync);
 
     (service as { onModuleInit: () => void }).onModuleInit();
     jest.advanceTimersByTime(120_000);

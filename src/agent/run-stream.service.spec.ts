@@ -19,7 +19,10 @@ describe('RunStreamService', () => {
       label: 'parsed',
     };
     const result: AgentRunResult = { runId, steps: [step] };
-    const received: Array<{ type: 'step'; step: StepEvent } | { type: 'complete'; result: AgentRunResult }> = [];
+    const received: Array<
+      | { type: 'step'; step: StepEvent }
+      | { type: 'complete'; result: AgentRunResult }
+    > = [];
 
     service.createRun(runId);
 
@@ -42,8 +45,18 @@ describe('RunStreamService', () => {
     const service = new RunStreamService();
     const runA = 'run-a';
     const runB = 'run-b';
-    const stepA: StepEvent = { type: 'step', node: 'validate_policy', status: 'success', label: 'ok-a' };
-    const stepB: StepEvent = { type: 'step', node: 'validate_policy', status: 'rejected', label: 'no-b' };
+    const stepA: StepEvent = {
+      type: 'step',
+      node: 'validate_policy',
+      status: 'success',
+      label: 'ok-a',
+    };
+    const stepB: StepEvent = {
+      type: 'step',
+      node: 'validate_policy',
+      status: 'rejected',
+      label: 'no-b',
+    };
 
     const receivedA: Array<{ type: string }> = [];
     const receivedB: Array<{ type: string }> = [];
@@ -90,7 +103,10 @@ describe('RunStreamService', () => {
     service.emitStep(runId, stepB);
     service.emitComplete(runId, result);
 
-    const received: Array<{ type: 'step'; step: StepEvent } | { type: 'complete'; result: AgentRunResult }> = [];
+    const received: Array<
+      | { type: 'step'; step: StepEvent }
+      | { type: 'complete'; result: AgentRunResult }
+    > = [];
 
     service.subscribe(runId)?.subscribe((event) => {
       received.push(event);
@@ -101,6 +117,58 @@ describe('RunStreamService', () => {
       { type: 'step', step: stepB },
       { type: 'complete', result },
     ]);
+  });
+
+  it('replays complete result with recovery payload for late subscribers', () => {
+    const service = new RunStreamService();
+    const runId = 'run-rejected-replay';
+    const result: AgentRunResult = {
+      runId,
+      steps: [],
+      rejection: {
+        reason: 'Invalid amountLamports: must be a finite positive integer.',
+        policyField: 'amount_lamports',
+      },
+      agentMessage:
+        "I couldn't complete that transfer. Amount was parsed as 0 lamports.",
+      recovery: {
+        summary: 'Amount was parsed as 0 lamports.',
+        likelyIntent: 'tf to bene.skr 0.5 sol',
+        suggestedActions: [
+          {
+            id: 'retry_transfer_sol',
+            label: 'Retry transfer with SOL format',
+            type: 'retry_intent',
+            intent: 'tf to bene.skr 0.5 sol',
+          },
+        ],
+        recommendedActionId: 'retry_transfer_sol',
+      },
+    };
+
+    service.createRun(runId);
+    service.emitComplete(runId, result);
+
+    const received: Array<
+      | { type: 'step'; step: StepEvent }
+      | { type: 'complete'; result: AgentRunResult }
+    > = [];
+
+    service.subscribe(runId)?.subscribe((event) => {
+      received.push(event);
+    });
+
+    expect(received).toEqual([{ type: 'complete', result }]);
+    expect(received[0]).toEqual(
+      expect.objectContaining({
+        type: 'complete',
+        result: expect.objectContaining({
+          recovery: expect.objectContaining({
+            recommendedActionId: 'retry_transfer_sol',
+          }),
+        }),
+      }),
+    );
   });
 
   it('bounds replay buffer for late subscribers', () => {
@@ -122,7 +190,10 @@ describe('RunStreamService', () => {
     const result: AgentRunResult = { runId, steps: [] };
     service.emitComplete(runId, result);
 
-    const received: Array<{ type: 'step'; step: StepEvent } | { type: 'complete'; result: AgentRunResult }> = [];
+    const received: Array<
+      | { type: 'step'; step: StepEvent }
+      | { type: 'complete'; result: AgentRunResult }
+    > = [];
     service.subscribe(runId)?.subscribe((event) => {
       received.push(event);
     });
@@ -164,7 +235,12 @@ describe('AgentController stream', () => {
     const agentService = {} as AgentService;
     const controller = new AgentController(agentService, runStream);
     const runId = 'run-2';
-    const step: StepEvent = { type: 'step', node: 'build_transaction', status: 'success', label: 'built' };
+    const step: StepEvent = {
+      type: 'step',
+      node: 'build_transaction',
+      status: 'success',
+      label: 'built',
+    };
     const result: AgentRunResult = { runId, steps: [step] };
     const payloads: Array<Record<string, unknown>> = [];
     const onComplete = jest.fn();
@@ -188,9 +264,13 @@ describe('AgentController stream', () => {
     expect(payloads).toContainEqual({ type: 'complete', result });
     expect(onComplete).toHaveBeenCalledTimes(1);
 
-    const heartbeatCount = payloads.filter((entry) => entry.type === 'heartbeat').length;
+    const heartbeatCount = payloads.filter(
+      (entry) => entry.type === 'heartbeat',
+    ).length;
     jest.advanceTimersByTime(8000);
-    expect(payloads.filter((entry) => entry.type === 'heartbeat')).toHaveLength(heartbeatCount);
+    expect(payloads.filter((entry) => entry.type === 'heartbeat')).toHaveLength(
+      heartbeatCount,
+    );
 
     sub.unsubscribe();
   });

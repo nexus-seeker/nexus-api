@@ -1,7 +1,12 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PublicKey } from '@solana/web3.js';
-import type { AgentState, StepEvent, AgentRunResult, IntentClass } from './state';
+import type {
+  AgentState,
+  StepEvent,
+  AgentRunResult,
+  IntentClass,
+} from './state';
 import {
   parseIntentNode,
   buildTransactionNode,
@@ -26,6 +31,7 @@ import { IntentClassifierService } from './intent-classifier.service';
 import { MarketContextService } from './market-context.service';
 import { TokenSafetyTool } from './tools/token-safety.tool';
 import type { Prisma } from '@prisma/client';
+import { RejectionRecoveryService } from './rejection-recovery.service';
 
 // Anomaly threshold: warn when tx is 5x larger than the user's typical size
 const ANOMALY_RATIO_THRESHOLD = 5;
@@ -61,15 +67,28 @@ export class AgentService {
     @Optional() private readonly userMemoryService?: UserMemoryService,
     @Optional() private readonly nameResolutionService?: NameResolutionService,
     @Optional() private readonly tokenSafetyTool?: TokenSafetyTool,
-  ) { }
+    @Optional()
+    private readonly rejectionRecoveryService?: RejectionRecoveryService,
+  ) {}
 
-  startAgentRun(intent: string, pubkey: string, threadId?: string): AgentRunResult {
+  startAgentRun(
+    intent: string,
+    pubkey: string,
+    threadId?: string,
+  ): AgentRunResult {
     const resolvedThreadId = this.resolveThreadId(pubkey, threadId);
     const runId = this.initializeRun(intent, pubkey);
 
-    void this.executeAgentWithRunId(intent, pubkey, runId, resolvedThreadId).catch((err: any) => {
+    void this.executeAgentWithRunId(
+      intent,
+      pubkey,
+      runId,
+      resolvedThreadId,
+    ).catch((err: any) => {
       const errorMessage = err?.message || 'Unknown execution error';
-      this.logger.error(`[${runId}] Agent background execution error: ${errorMessage}`);
+      this.logger.error(
+        `[${runId}] Agent background execution error: ${errorMessage}`,
+      );
       this.runStream.emitComplete(runId, {
         runId,
         steps: [],
@@ -83,7 +102,11 @@ export class AgentService {
     return { runId, steps: [] };
   }
 
-  async executeAgent(intent: string, pubkey: string, threadId?: string): Promise<AgentRunResult> {
+  async executeAgent(
+    intent: string,
+    pubkey: string,
+    threadId?: string,
+  ): Promise<AgentRunResult> {
     const resolvedThreadId = this.resolveThreadId(pubkey, threadId);
     const runId = this.initializeRun(intent, pubkey);
     return this.executeAgentWithRunId(intent, pubkey, runId, resolvedThreadId);
@@ -106,8 +129,14 @@ export class AgentService {
     const allSteps: StepEvent[] = [];
 
     try {
-      void this.enqueueLifecyclePersistence(runId, pubkey, 'run_started', { intent, threadId });
-      void this.enqueueLifecyclePersistence(runId, pubkey, 'message_user', { content: intent, threadId });
+      void this.enqueueLifecyclePersistence(runId, pubkey, 'run_started', {
+        intent,
+        threadId,
+      });
+      void this.enqueueLifecyclePersistence(runId, pubkey, 'message_user', {
+        content: intent,
+        threadId,
+      });
 
       const llm = this.llmService.getLlm();
 
@@ -188,9 +217,12 @@ export class AgentService {
         const solBalance = (balances.nativeBalance / 1e9).toFixed(3);
         walletSnippet = `User's wallet: ${solBalance} SOL`;
         if (balances.tokens.length > 0) {
-          const topTokens = balances.tokens.slice(0, 3).map((t) =>
-            `${t.symbol ?? t.mint.slice(0, 6)} ${t.uiAmount?.toFixed(2) ?? '?'}`,
-          );
+          const topTokens = balances.tokens
+            .slice(0, 3)
+            .map(
+              (t) =>
+                `${t.symbol ?? t.mint.slice(0, 6)} ${t.uiAmount?.toFixed(2) ?? '?'}`,
+            );
           walletSnippet += `, ${topTokens.join(', ')}`;
         }
       } catch {
@@ -198,7 +230,9 @@ export class AgentService {
       }
     }
 
-    const contextBlock = [memoryContext, marketStr, walletSnippet].filter(Boolean).join('\n');
+    const contextBlock = [memoryContext, marketStr, walletSnippet]
+      .filter(Boolean)
+      .join('\n');
 
     const response = await llm.invoke([
       {
@@ -209,7 +243,9 @@ export class AgentService {
     ]);
 
     state.agentMessage =
-      typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content);
 
     await this.emitStep(runId, pubkey, threadId!, allSteps, {
       node: 'casual_reply',
@@ -231,7 +267,12 @@ export class AgentService {
     const { runId, pubkey, threadId } = state;
 
     const toolSchema = this.toolRegistry.getSchemaForLlm();
-    const parseResult = await parseIntentNode(state, llm, toolSchema, memoryContext);
+    const parseResult = await parseIntentNode(
+      state,
+      llm,
+      toolSchema,
+      memoryContext,
+    );
     Object.assign(state, parseResult);
     if (parseResult.steps) {
       for (const step of parseResult.steps) {
@@ -273,7 +314,12 @@ export class AgentService {
     } else {
       state.agentMessage = toolResult.agentMessage;
       if (!state.agentMessage) {
-        const synthResult = await synthesizeResponseNode(state, llm, toolResult, memoryContext);
+        const synthResult = await synthesizeResponseNode(
+          state,
+          llm,
+          toolResult,
+          memoryContext,
+        );
         Object.assign(state, synthResult);
         if (synthResult.steps) {
           for (const step of synthResult.steps) {
@@ -283,7 +329,9 @@ export class AgentService {
       }
     }
 
-    await this.emitStep(runId, pubkey, threadId!, allSteps, { ...toolResult.stepEvent });
+    await this.emitStep(runId, pubkey, threadId!, allSteps, {
+      ...toolResult.stepEvent,
+    });
     return this.finishRun(runId, allSteps, state);
   }
 
@@ -325,7 +373,10 @@ export class AgentService {
     // Also check wallet analysis for the sender address, if present
     if (mintMatch && this.heliusService) {
       try {
-        const txs = await this.heliusService.getRecentTransactions(mintMatch[0], 5);
+        const txs = await this.heliusService.getRecentTransactions(
+          mintMatch[0],
+          5,
+        );
         safetyContext += `\n\nSender's recent transactions (last 5):\n${JSON.stringify(txs)}`;
       } catch {
         // Non-fatal
@@ -346,7 +397,9 @@ export class AgentService {
     ]);
 
     state.agentMessage =
-      typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content);
 
     await this.emitStep(runId, pubkey, threadId!, allSteps, {
       node: 'safety_response',
@@ -384,7 +437,9 @@ export class AgentService {
     ]);
 
     state.agentMessage =
-      typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content);
 
     await this.emitStep(runId, pubkey, threadId!, allSteps, {
       node: 'learn_response',
@@ -420,7 +475,9 @@ export class AgentService {
       }
     }
 
-    const contextBlock = [memoryContext, marketStr, walletSnapshot].filter(Boolean).join('\n');
+    const contextBlock = [memoryContext, marketStr, walletSnapshot]
+      .filter(Boolean)
+      .join('\n');
 
     await this.emitStep(runId, pubkey, threadId!, allSteps, {
       node: 'complex_plan',
@@ -437,7 +494,9 @@ export class AgentService {
     ]);
 
     state.agentMessage =
-      typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content);
 
     await this.emitStep(runId, pubkey, threadId!, allSteps, {
       node: 'complex_plan',
@@ -459,7 +518,12 @@ export class AgentService {
     const { runId, pubkey, threadId } = state;
 
     const toolSchema = this.toolRegistry.getSchemaForLlm();
-    const parseResult = await parseIntentNode(state, llm, toolSchema, memoryContext);
+    const parseResult = await parseIntentNode(
+      state,
+      llm,
+      toolSchema,
+      memoryContext,
+    );
     Object.assign(state, parseResult);
     if (parseResult.steps) {
       for (const step of parseResult.steps) {
@@ -525,7 +589,8 @@ export class AgentService {
         return this.finishRun(runId, allSteps, state);
       }
       if (!agentProfile) {
-        const msg = 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.';
+        const msg =
+          'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.';
         await this.emitStep(runId, pubkey, threadId!, allSteps, {
           node: 'validate_policy',
           status: 'rejected',
@@ -575,10 +640,14 @@ export class AgentService {
 
       // ── Policy Precheck ──────────────────────────────────────────
       let precheck;
+      const amountForPolicy = state.amountLamports || 0;
+      this.logger.log(
+        `[${runId}] Policy precheck called with amountLamports: ${amountForPolicy} (state.amountLamports: ${state.amountLamports})`,
+      );
       try {
         precheck = await this.policyPrecheck.precheck({
           pubkey,
-          amountLamports: state.amountLamports || 0,
+          amountLamports: amountForPolicy,
           protocol: state.protocol || 'jupiter',
         });
       } catch (err: any) {
@@ -622,7 +691,11 @@ export class AgentService {
       state.policyValid = true;
 
       // ── Anomaly Detection (improvement #6) ───────────────────────
-      if (this.userMemoryService && state.amountLamports && state.amountLamports > 0) {
+      if (
+        this.userMemoryService &&
+        state.amountLamports &&
+        state.amountLamports > 0
+      ) {
         try {
           const memory = await this.userMemoryService.findOrCreate(pubkey);
           if (memory.avgTradeSizeSol > 0 && memory.runCount >= 3) {
@@ -633,7 +706,11 @@ export class AgentService {
                 node: 'anomaly_check',
                 status: 'success',
                 label: `⚠️ This tx is ${ratio.toFixed(1)}x larger than your usual ${memory.avgTradeSizeSol.toFixed(3)} SOL`,
-                payload: { ratio, requestedSol, avgTradeSizeSol: memory.avgTradeSizeSol },
+                payload: {
+                  ratio,
+                  requestedSol,
+                  avgTradeSizeSol: memory.avgTradeSizeSol,
+                },
               });
             }
           }
@@ -672,7 +749,12 @@ export class AgentService {
       state.simulationResult = toolResult.simulationResult;
 
       if (!state.agentMessage) {
-        const synthResult = await synthesizeResponseNode(state, llm, toolResult, memoryContext);
+        const synthResult = await synthesizeResponseNode(
+          state,
+          llm,
+          toolResult,
+          memoryContext,
+        );
         Object.assign(state, synthResult);
         if (synthResult.steps) {
           for (const step of synthResult.steps) {
@@ -682,7 +764,9 @@ export class AgentService {
       }
     }
 
-    await this.emitStep(runId, pubkey, threadId!, allSteps, { ...toolResult.stepEvent });
+    await this.emitStep(runId, pubkey, threadId!, allSteps, {
+      ...toolResult.stepEvent,
+    });
     return this.finishRun(runId, allSteps, state);
   }
 
@@ -701,21 +785,32 @@ export class AgentService {
 
     if (state.recipientPubkey) {
       try {
-        const result = await this.nameResolutionService.resolveNameOrAddress(state.recipientPubkey);
+        const result = await this.nameResolutionService.resolveNameOrAddress(
+          state.recipientPubkey,
+        );
         state.recipientPubkey = result.address;
         if (result.source === 'sns_domain') {
           resolved.push({ input: result.input, address: result.address });
         }
       } catch (error: any) {
-        return { ok: false, reason: error?.message || 'Unknown recipient resolution error', resolved };
+        return {
+          ok: false,
+          reason: error?.message || 'Unknown recipient resolution error',
+          resolved,
+        };
       }
     }
 
     if (state.recipients && state.recipients.length > 0) {
-      const nextRecipients = [] as Array<{ pubkey: string; amountLamports: number }>;
+      const nextRecipients = [] as Array<{
+        pubkey: string;
+        amountLamports: number;
+      }>;
       for (const recipient of state.recipients) {
         try {
-          const result = await this.nameResolutionService.resolveNameOrAddress(recipient.pubkey);
+          const result = await this.nameResolutionService.resolveNameOrAddress(
+            recipient.pubkey,
+          );
           nextRecipients.push({ ...recipient, pubkey: result.address });
           if (result.source === 'sns_domain') {
             resolved.push({ input: result.input, address: result.address });
@@ -744,7 +839,25 @@ export class AgentService {
     if (state.unsignedTxBase64) result.unsignedTx = state.unsignedTxBase64;
     if (state.agentMessage) result.agentMessage = state.agentMessage;
     if (state.rejectionReason) {
-      result.rejection = { reason: state.rejectionReason, policyField: state.rejectionField || 'unknown' };
+      const recovery = this.rejectionRecoveryService?.compose({
+        intent: state.intent,
+        rejectionField: state.rejectionField,
+        rejectionReason: state.rejectionReason,
+        steps,
+      });
+      if (recovery) {
+        result.recovery = recovery;
+      }
+      if (!result.agentMessage) {
+        const recoverySummary = recovery?.summary
+          ? ` ${recovery.summary}`
+          : ' Try again with a clearer amount or protocol.';
+        result.agentMessage = `I couldn't complete that request.${recoverySummary}`;
+      }
+      result.rejection = {
+        reason: state.rejectionReason,
+        policyField: state.rejectionField || 'unknown',
+      };
     }
     if (state.simulationResult) result.simulation = state.simulationResult;
 
@@ -754,30 +867,44 @@ export class AgentService {
       void this.userMemoryService.updateAfterRun(state.pubkey, {
         tokenIn: state.tokenIn,
         tokenOut: state.tokenOut,
-        amountSol: state.amountLamports ? state.amountLamports / 1e9 : undefined,
+        amountSol: state.amountLamports
+          ? state.amountLamports / 1e9
+          : undefined,
         recipientPubkey: state.recipientPubkey,
       });
     }
 
     if (result.rejection) {
-      void this.enqueueLifecyclePersistence(runId, state.pubkey, 'run_rejected', {
-        reason: result.rejection.reason,
-        policyField: result.rejection.policyField,
-        intent: state.intent,
-        intentClass: state.intentClass,
-        threadId: state.threadId,
-        steps,
-      });
+      void this.enqueueLifecyclePersistence(
+        runId,
+        state.pubkey,
+        'run_rejected',
+        {
+          reason: result.rejection.reason,
+          policyField: result.rejection.policyField,
+          response: result.agentMessage,
+          recovery: result.recovery,
+          intent: state.intent,
+          intentClass: state.intentClass,
+          threadId: state.threadId,
+          steps,
+        },
+      );
     } else {
-      void this.enqueueLifecyclePersistence(runId, state.pubkey, 'run_completed', {
-        intent: state.intent,
-        intentClass: state.intentClass,
-        threadId: state.threadId,
-        response: result.agentMessage,
-        steps,
-        unsignedTx: result.unsignedTx,
-        simulation: result.simulation,
-      });
+      void this.enqueueLifecyclePersistence(
+        runId,
+        state.pubkey,
+        'run_completed',
+        {
+          intent: state.intent,
+          intentClass: state.intentClass,
+          threadId: state.threadId,
+          response: result.agentMessage,
+          steps,
+          unsignedTx: result.unsignedTx,
+          simulation: result.simulation,
+        },
+      );
     }
 
     return result;
@@ -792,7 +919,10 @@ export class AgentService {
   ): Promise<void> {
     allSteps.push(step);
     this.runStream.emitStep(runId, step);
-    void this.enqueueLifecyclePersistence(runId, pubkey, 'step_emitted', { threadId, step });
+    void this.enqueueLifecyclePersistence(runId, pubkey, 'step_emitted', {
+      threadId,
+      step,
+    });
   }
 
   private resolveThreadId(pubkey: string, threadId?: string): string {
@@ -807,7 +937,9 @@ export class AgentService {
     payload: Record<string, unknown>,
   ): Promise<void> {
     const previous = this.persistenceChains.get(runId) ?? Promise.resolve();
-    const next = previous.then(() => this.persistLifecycleEvent(runId, pubkey, type, payload));
+    const next = previous.then(() =>
+      this.persistLifecycleEvent(runId, pubkey, type, payload),
+    );
     this.persistenceChains.set(runId, next);
     return next.finally(() => {
       if (this.persistenceChains.get(runId) === next) {
@@ -826,7 +958,12 @@ export class AgentService {
 
     try {
       const jsonPayload = payload as Prisma.InputJsonValue;
-      const event = await this.historyEvents.append({ runId, pubkey, type, payload: jsonPayload });
+      const event = await this.historyEvents.append({
+        runId,
+        pubkey,
+        type,
+        payload: jsonPayload,
+      });
       await this.historyProjection.project({
         runId: event.runId,
         pubkey: event.pubkey,
@@ -837,7 +974,9 @@ export class AgentService {
       });
     } catch (error: any) {
       const message = error?.message || 'Unknown persistence error';
-      this.logger.error(`[${runId}] Lifecycle persistence failed for ${type}: ${message}`);
+      this.logger.error(
+        `[${runId}] Lifecycle persistence failed for ${type}: ${message}`,
+      );
     }
   }
 

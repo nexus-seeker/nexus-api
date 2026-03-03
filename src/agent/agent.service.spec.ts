@@ -9,6 +9,7 @@ import { HistoryProjectionService } from '../history/history-projection.service'
 import { ToolRegistry } from './tools/tool.registry';
 import { IntentClassifierService } from './intent-classifier.service';
 import { MarketContextService } from './market-context.service';
+import { RejectionRecoveryService } from './rejection-recovery.service';
 import {
   parseIntentNode,
   buildTransactionNode,
@@ -31,19 +32,22 @@ import { selectRouteNode } from './graph';
 import { RouteSelectorService } from '../protocols/route-selector.service';
 
 describe('AgentService', () => {
-  const createRunStreamMock = () => ({
-    createRun: jest.fn(),
-    emitStep: jest.fn(),
-    emitComplete: jest.fn(),
-  }) as unknown as RunStreamService;
+  const createRunStreamMock = () =>
+    ({
+      createRun: jest.fn(),
+      emitStep: jest.fn(),
+      emitComplete: jest.fn(),
+    }) as unknown as RunStreamService;
 
-  const createHistoryEventsMock = () => ({
-    append: jest.fn(),
-  }) as unknown as HistoryEventsService;
+  const createHistoryEventsMock = () =>
+    ({
+      append: jest.fn(),
+    }) as unknown as HistoryEventsService;
 
-  const createHistoryProjectionMock = () => ({
-    project: jest.fn(),
-  }) as unknown as HistoryProjectionService;
+  const createHistoryProjectionMock = () =>
+    ({
+      project: jest.fn(),
+    }) as unknown as HistoryProjectionService;
 
   const mockLlmService = {
     getLlm: jest.fn().mockReturnValue({ invoke: jest.fn() }),
@@ -57,7 +61,11 @@ describe('AgentService', () => {
       success: true,
       unsignedTxBase64: 'mock-tx-base64',
       simulationResult: { fee: 5000, outAmount: 0, priceImpact: '0.00%' },
-      stepEvent: { node: 'build_transaction', status: 'success', label: 'Tool executed ✓' },
+      stepEvent: {
+        node: 'build_transaction',
+        status: 'success',
+        label: 'Tool executed ✓',
+      },
     }),
     getAll: jest.fn().mockReturnValue([]),
     register: jest.fn(),
@@ -67,7 +75,9 @@ describe('AgentService', () => {
 
   // Default: wallet is onboarded
   const mockSolanaService = {
-    fetchAgentProfile: jest.fn().mockResolvedValue({ owner: '11111111111111111111111111111111' }),
+    fetchAgentProfile: jest
+      .fn()
+      .mockResolvedValue({ owner: '11111111111111111111111111111111' }),
   } as unknown as SolanaService;
 
   // Intent classifier — default returns 'action' so existing action-pipeline tests pass unchanged
@@ -77,31 +87,50 @@ describe('AgentService', () => {
 
   // Market context stub
   const mockMarketContext = {
-    getContext: jest.fn().mockResolvedValue({ solPrice: 150, solChange24h: 2.5, networkCongestion: 'low', avgTxFeeSOL: 0.000005 }),
+    getContext: jest.fn().mockResolvedValue({
+      solPrice: 150,
+      solChange24h: 2.5,
+      networkCongestion: 'low',
+      avgTxFeeSOL: 0.000005,
+    }),
     formatForLlm: jest.fn().mockReturnValue('SOL: $150 (+2.5%)'),
   } as unknown as MarketContextService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    (mockSolanaService.fetchAgentProfile as jest.Mock).mockResolvedValue({ owner: '11111111111111111111111111111111' });
+    (mockSolanaService.fetchAgentProfile as jest.Mock).mockResolvedValue({
+      owner: '11111111111111111111111111111111',
+    });
     (mockIntentClassifier.classify as jest.Mock).mockResolvedValue('action');
     // Default: selectRouteNode returns jupiter
     (selectRouteNode as jest.Mock).mockResolvedValue({
       selectedProtocol: 'jupiter',
-      steps: [{ node: 'select_route', status: 'success', label: 'Jupiter selected' }],
+      steps: [
+        { node: 'select_route', status: 'success', label: 'Jupiter selected' },
+      ],
     });
     // Default: toolRegistry success — override per-test as needed
     (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
       success: true,
       unsignedTxBase64: 'mock-tx-base64',
       simulationResult: { fee: 5000, outAmount: 0, priceImpact: '0.00%' },
-      stepEvent: { node: 'build_transaction', status: 'success', label: 'Tool executed ✓' },
+      stepEvent: {
+        node: 'build_transaction',
+        status: 'success',
+        label: 'Tool executed ✓',
+      },
     });
     (mockToolRegistry.getAll as jest.Mock).mockReturnValue([]);
     // Default: synthesizeResponseNode returns a valid step
     (synthesizeResponseNode as jest.Mock).mockResolvedValue({
       agentMessage: 'Mocked conversational response',
-      steps: [{ node: 'synthesize_response', status: 'success', label: 'Response generated' }],
+      steps: [
+        {
+          node: 'synthesize_response',
+          status: 'success',
+          label: 'Response generated',
+        },
+      ],
     });
   });
 
@@ -119,16 +148,37 @@ describe('AgentService', () => {
         success: false,
         rejectionReason: 'Assembler returned empty transaction',
         rejectionField: 'tx_assembly',
-        stepEvent: { node: 'build_transaction', status: 'rejected', label: 'Empty tx' },
+        stepEvent: {
+          node: 'build_transaction',
+          status: 'rejected',
+          label: 'Empty tx',
+        },
       });
 
-      const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+      const service = new AgentService(
+        txAssembler,
+        policyPrecheck,
+        runStream,
+        mockLlmService,
+        mockSolanaService,
+        mockRouteSelectorService,
+        mockToolRegistry,
+        mockIntentClassifier,
+        mockMarketContext,
+      );
 
       (parseIntentNode as jest.Mock).mockResolvedValue({
         action: 'swap',
         amountLamports: 100000000,
         protocol: 'jupiter',
-        steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+        steps: [
+          {
+            type: 'step',
+            node: 'parse_intent',
+            status: 'success',
+            label: 'parsed',
+          },
+        ],
       });
 
       const result = await service.executeAgent(
@@ -152,16 +202,37 @@ describe('AgentService', () => {
       success: false,
       rejectionReason: 'Missing Jupiter instructions',
       rejectionField: 'tx_assembly',
-      stepEvent: { node: 'build_transaction', status: 'rejected', label: 'Missing Jupiter instructions' },
+      stepEvent: {
+        node: 'build_transaction',
+        status: 'rejected',
+        label: 'Missing Jupiter instructions',
+      },
     });
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
     const result = await service.executeAgent(
@@ -188,7 +259,11 @@ describe('AgentService', () => {
         success: false,
         rejectionReason: 'Tx assembly failed: assembler down',
         rejectionField: 'tx_assembly',
-        stepEvent: { node: 'build_transaction', status: 'rejected', label: 'Assembly error: assembler down' },
+        stepEvent: {
+          node: 'build_transaction',
+          status: 'rejected',
+          label: 'Assembly error: assembler down',
+        },
       }),
       getAll: jest.fn().mockReturnValue([]),
       register: jest.fn(),
@@ -196,14 +271,29 @@ describe('AgentService', () => {
       getSchemaForLlm: jest.fn().mockReturnValue(''),
     } as unknown as ToolRegistry;
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, failingToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      failingToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
       steps: [
-        { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
       ],
     });
 
@@ -230,16 +320,37 @@ describe('AgentService', () => {
       success: false,
       rejectionReason: 'Tool "swap" failed: Unknown tool execution error',
       rejectionField: 'tool_execution',
-      stepEvent: { node: 'tool_executor', status: 'rejected', label: 'Tool error: Unknown tool execution error' },
+      stepEvent: {
+        node: 'tool_executor',
+        status: 'rejected',
+        label: 'Tool error: Unknown tool execution error',
+      },
     });
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
     const result = await service.executeAgent(
@@ -262,19 +373,35 @@ describe('AgentService', () => {
       precheck: jest.fn().mockResolvedValue({
         allowed: false,
         rejectionField: 'daily_max',
-        reason: 'Daily max exceeded: requested 0.1 SOL, cap 0.05 SOL, remaining 0 SOL.',
+        reason:
+          'Daily max exceeded: requested 0.1 SOL, cap 0.05 SOL, remaining 0 SOL.',
       }),
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
       steps: [
-        { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
       ],
     });
 
@@ -314,13 +441,30 @@ describe('AgentService', () => {
       fetchAgentProfile: jest.fn().mockResolvedValue(null),
     } as unknown as SolanaService;
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, notOnboardedSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      notOnboardedSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
     const result = await service.executeAgent(
@@ -353,17 +497,42 @@ describe('AgentService', () => {
     (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
       success: true,
       unsignedTxBase64: 'assembled-tx',
-      simulationResult: { fee: 9123, outAmount: 14230000, priceImpact: '0.02%' },
-      stepEvent: { node: 'build_transaction', status: 'success', label: 'Swap done' },
+      simulationResult: {
+        fee: 9123,
+        outAmount: 14230000,
+        priceImpact: '0.02%',
+      },
+      stepEvent: {
+        node: 'build_transaction',
+        status: 'success',
+        label: 'Swap done',
+      },
     });
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
     const result = await service.executeAgent(
@@ -389,18 +558,43 @@ describe('AgentService', () => {
     (mockToolRegistry.dispatch as jest.Mock).mockResolvedValue({
       success: true,
       unsignedTxBase64: 'spl-transfer-tx',
-      simulationResult: { fee: 5000, outAmount: 10_000_000, priceImpact: '0.00%' },
-      stepEvent: { node: 'build_transaction', status: 'success', label: 'Transfer prepared' },
+      simulationResult: {
+        fee: 5000,
+        outAmount: 10_000_000,
+        priceImpact: '0.00%',
+      },
+      stepEvent: {
+        node: 'build_transaction',
+        status: 'success',
+        label: 'Transfer prepared',
+      },
     });
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'transfer',
       amountLamports: 10_000_000,
       protocol: 'spl_transfer',
       recipientPubkey: 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
     const result = await service.executeAgent(
@@ -427,16 +621,36 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
-    const result = await service.executeAgent('swap 0.1 SOL to USDC', 'not-a-valid-solana-pubkey');
+    const result = await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      'not-a-valid-solana-pubkey',
+    );
 
     expect(policyPrecheck.precheck).not.toHaveBeenCalled();
     expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
@@ -454,18 +668,36 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
       steps: [
-        { type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' },
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
       ],
     });
 
-    const result = await service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    const result = await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
 
     expect(buildTransactionNode).not.toHaveBeenCalled();
     expect(txAssembler.assembleTransaction).not.toHaveBeenCalled();
@@ -500,10 +732,19 @@ describe('AgentService', () => {
     const historyProjection = createHistoryProjectionMock();
 
     let seq = 0;
-    (historyEvents.append as jest.Mock).mockImplementation(({ runId, pubkey: pk, type, payload }) => {
-      seq += 1;
-      return Promise.resolve({ runId: runId ?? 'run-1', pubkey: pk ?? 'pk', seq, eventType: type, createdAt: new Date('2026-02-28T12:00:00.000Z'), payload });
-    });
+    (historyEvents.append as jest.Mock).mockImplementation(
+      ({ runId, pubkey: pk, type, payload }) => {
+        seq += 1;
+        return Promise.resolve({
+          runId: runId ?? 'run-1',
+          pubkey: pk ?? 'pk',
+          seq,
+          eventType: type,
+          createdAt: new Date('2026-02-28T12:00:00.000Z'),
+          payload,
+        });
+      },
+    );
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -517,32 +758,68 @@ describe('AgentService', () => {
       mockMarketContext,
       historyEvents,
       historyProjection,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new RejectionRecoveryService(),
     ) as AgentService;
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
     (buildTransactionNode as jest.Mock).mockResolvedValue({
       jupiterInstructions: { swapTransaction: 'jupiter-tx' },
-      steps: [{ type: 'step', node: 'build_transaction', status: 'success', label: 'built' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'build_transaction',
+          status: 'success',
+          label: 'built',
+        },
+      ],
     });
 
-    await service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(historyEvents.append).toHaveBeenNthCalledWith(1, expect.objectContaining({ type: 'run_started' }));
-    expect(historyEvents.append).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: 'message_user' }));
-    expect(historyEvents.append).toHaveBeenCalledWith(expect.objectContaining({ type: 'step_emitted' }));
+    expect(historyEvents.append).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ type: 'run_started' }),
+    );
+    expect(historyEvents.append).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ type: 'message_user' }),
+    );
+    expect(historyEvents.append).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'step_emitted' }),
+    );
     expect(historyEvents.append).toHaveBeenLastCalledWith(
       expect.objectContaining({
         type: 'run_completed',
-        payload: expect.objectContaining({ response: 'Mocked conversational response' }),
+        payload: expect.objectContaining({
+          response: 'Mocked conversational response',
+        }),
       }),
     );
-    expect(historyProjection.project).toHaveBeenCalledTimes((historyEvents.append as jest.Mock).mock.calls.length);
+    expect(historyProjection.project).toHaveBeenCalledTimes(
+      (historyEvents.append as jest.Mock).mock.calls.length,
+    );
   });
 
   it('writes run_rejected as the terminal event when execution is rejected', async () => {
@@ -562,10 +839,19 @@ describe('AgentService', () => {
     const historyProjection = createHistoryProjectionMock();
 
     let seq2 = 0;
-    (historyEvents.append as jest.Mock).mockImplementation(({ runId, pubkey: pk, type, payload }) => {
-      seq2 += 1;
-      return Promise.resolve({ runId: runId ?? 'run-2', pubkey: pk ?? 'pk', seq: seq2, eventType: type, createdAt: new Date('2026-02-28T12:10:00.000Z'), payload });
-    });
+    (historyEvents.append as jest.Mock).mockImplementation(
+      ({ runId, pubkey: pk, type, payload }) => {
+        seq2 += 1;
+        return Promise.resolve({
+          runId: runId ?? 'run-2',
+          pubkey: pk ?? 'pk',
+          seq: seq2,
+          eventType: type,
+          createdAt: new Date('2026-02-28T12:10:00.000Z'),
+          payload,
+        });
+      },
+    );
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -579,20 +865,129 @@ describe('AgentService', () => {
       mockMarketContext,
       historyEvents,
       historyProjection,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new RejectionRecoveryService(),
     ) as AgentService;
 
     (parseIntentNode as jest.Mock).mockResolvedValue({
       action: 'swap',
       amountLamports: 100000000,
       protocol: 'jupiter',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
-    await service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    await service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(historyEvents.append).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'run_rejected' }));
-    expect(historyEvents.append).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'run_completed' }));
+    expect(historyEvents.append).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: 'run_rejected' }),
+    );
+    expect(historyEvents.append).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'run_completed' }),
+    );
+  });
+
+  it('returns recovery and friendly agentMessage for rejected results and persists both', async () => {
+    const txAssembler = {
+      assembleTransaction: jest.fn(),
+      simulateUnsignedTx: jest.fn(),
+    } as unknown as TxAssemblerService;
+    const policyPrecheck = {
+      precheck: jest.fn().mockResolvedValue({
+        allowed: false,
+        rejectionField: 'daily_max',
+        reason: 'Daily max exceeded',
+      }),
+    } as unknown as PolicyPrecheckService;
+    const runStream = createRunStreamMock();
+    const historyEvents = createHistoryEventsMock();
+    const historyProjection = createHistoryProjectionMock();
+
+    let seq = 0;
+    (historyEvents.append as jest.Mock).mockImplementation(
+      ({ runId, pubkey: pk, type, payload }) => {
+        seq += 1;
+        return Promise.resolve({
+          runId: runId ?? 'run-3',
+          pubkey: pk ?? 'pk',
+          seq,
+          eventType: type,
+          createdAt: new Date('2026-03-03T12:10:00.000Z'),
+          payload,
+        });
+      },
+    );
+
+    const service = new (AgentService as any)(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+      historyEvents,
+      historyProjection,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new RejectionRecoveryService(),
+    ) as AgentService;
+
+    (parseIntentNode as jest.Mock).mockResolvedValue({
+      action: 'transfer',
+      amountLamports: 0,
+      protocol: 'spl_transfer',
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
+    });
+
+    const result = await service.executeAgent(
+      'tf to bene.skr 1 0.5 sol',
+      '11111111111111111111111111111111',
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(result.rejection).toEqual(
+      expect.objectContaining({ policyField: 'daily_max' }),
+    );
+    expect(result.recovery).toBeDefined();
+    expect(result.agentMessage).toContain("couldn't complete");
+    expect(historyEvents.append).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'run_rejected',
+        payload: expect.objectContaining({
+          response: expect.any(String),
+          recovery: expect.any(Object),
+        }),
+      }),
+    );
   });
 
   it('emits stream step and complete events while executing', async () => {
@@ -608,7 +1003,17 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     const parseStep = {
       type: 'step',
@@ -694,27 +1099,29 @@ describe('AgentService', () => {
     const historyEvents = createHistoryEventsMock();
     const historyProjection = createHistoryProjectionMock();
 
-    (historyEvents.append as jest.Mock).mockImplementation(({ runId, pubkey, type, payload }) => {
-      if (type === 'run_started' || type === 'message_user') {
-        return startupPersistenceGate.then(() => ({
+    (historyEvents.append as jest.Mock).mockImplementation(
+      ({ runId, pubkey, type, payload }) => {
+        if (type === 'run_started' || type === 'message_user') {
+          return startupPersistenceGate.then(() => ({
+            runId,
+            pubkey,
+            seq: type === 'run_started' ? 1 : 2,
+            eventType: type,
+            createdAt: new Date('2026-02-28T12:00:00.000Z'),
+            payload,
+          }));
+        }
+
+        return Promise.resolve({
           runId,
           pubkey,
-          seq: type === 'run_started' ? 1 : 2,
+          seq: 3,
           eventType: type,
           createdAt: new Date('2026-02-28T12:00:00.000Z'),
           payload,
-        }));
-      }
-
-      return Promise.resolve({
-        runId,
-        pubkey,
-        seq: 3,
-        eventType: type,
-        createdAt: new Date('2026-02-28T12:00:00.000Z'),
-        payload,
-      });
-    });
+        });
+      },
+    );
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -748,7 +1155,10 @@ describe('AgentService', () => {
       steps: [],
     });
 
-    const runPromise = service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    const runPromise = service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
     const runId = (runStream.createRun as jest.Mock).mock.calls[0][0];
 
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -780,22 +1190,24 @@ describe('AgentService', () => {
     const historyProjection = createHistoryProjectionMock();
     const persistedTypes: string[] = [];
 
-    (historyEvents.append as jest.Mock).mockImplementation(async ({ runId, pubkey, type, payload }) => {
-      if (type === 'run_started') {
-        await startupPersistenceGate;
-      }
+    (historyEvents.append as jest.Mock).mockImplementation(
+      async ({ runId, pubkey, type, payload }) => {
+        if (type === 'run_started') {
+          await startupPersistenceGate;
+        }
 
-      persistedTypes.push(type);
+        persistedTypes.push(type);
 
-      return {
-        runId,
-        pubkey,
-        seq: persistedTypes.length,
-        eventType: type,
-        createdAt: new Date('2026-02-28T12:00:00.000Z'),
-        payload,
-      };
-    });
+        return {
+          runId,
+          pubkey,
+          seq: persistedTypes.length,
+          eventType: type,
+          createdAt: new Date('2026-02-28T12:00:00.000Z'),
+          payload,
+        };
+      },
+    );
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -829,7 +1241,10 @@ describe('AgentService', () => {
       steps: [],
     });
 
-    const runPromise = service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    const runPromise = service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
     const runId = (runStream.createRun as jest.Mock).mock.calls[0][0];
 
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -868,27 +1283,29 @@ describe('AgentService', () => {
     const historyEvents = createHistoryEventsMock();
     const historyProjection = createHistoryProjectionMock();
 
-    (historyEvents.append as jest.Mock).mockImplementation(({ runId, pubkey, type, payload }) => {
-      if (type === 'step_emitted' && payload?.step?.node === 'parse_intent') {
-        return stepPersistenceGate.then(() => ({
+    (historyEvents.append as jest.Mock).mockImplementation(
+      ({ runId, pubkey, type, payload }) => {
+        if (type === 'step_emitted' && payload?.step?.node === 'parse_intent') {
+          return stepPersistenceGate.then(() => ({
+            runId,
+            pubkey,
+            seq: 3,
+            eventType: type,
+            createdAt: new Date('2026-02-28T12:00:00.000Z'),
+            payload,
+          }));
+        }
+
+        return Promise.resolve({
           runId,
           pubkey,
-          seq: 3,
+          seq: 1,
           eventType: type,
           createdAt: new Date('2026-02-28T12:00:00.000Z'),
           payload,
-        }));
-      }
-
-      return Promise.resolve({
-        runId,
-        pubkey,
-        seq: 1,
-        eventType: type,
-        createdAt: new Date('2026-02-28T12:00:00.000Z'),
-        payload,
-      });
-    });
+        });
+      },
+    );
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -922,7 +1339,10 @@ describe('AgentService', () => {
       steps: [],
     });
 
-    const runPromise = service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    const runPromise = service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
     const runId = (runStream.createRun as jest.Mock).mock.calls[0][0];
 
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -953,27 +1373,29 @@ describe('AgentService', () => {
     const historyEvents = createHistoryEventsMock();
     const historyProjection = createHistoryProjectionMock();
 
-    (historyEvents.append as jest.Mock).mockImplementation(({ runId, pubkey, type, payload }) => {
-      if (type === 'run_completed') {
-        return terminalPersistenceGate.then(() => ({
+    (historyEvents.append as jest.Mock).mockImplementation(
+      ({ runId, pubkey, type, payload }) => {
+        if (type === 'run_completed') {
+          return terminalPersistenceGate.then(() => ({
+            runId,
+            pubkey,
+            seq: 5,
+            eventType: type,
+            createdAt: new Date('2026-02-28T12:00:10.000Z'),
+            payload,
+          }));
+        }
+
+        return Promise.resolve({
           runId,
           pubkey,
-          seq: 5,
+          seq: 1,
           eventType: type,
-          createdAt: new Date('2026-02-28T12:00:10.000Z'),
+          createdAt: new Date('2026-02-28T12:00:00.000Z'),
           payload,
-        }));
-      }
-
-      return Promise.resolve({
-        runId,
-        pubkey,
-        seq: 1,
-        eventType: type,
-        createdAt: new Date('2026-02-28T12:00:00.000Z'),
-        payload,
-      });
-    });
+        });
+      },
+    );
 
     const service = new (AgentService as any)(
       txAssembler,
@@ -1000,7 +1422,10 @@ describe('AgentService', () => {
       steps: [],
     });
 
-    const runPromise = service.executeAgent('swap 0.1 SOL to USDC', '11111111111111111111111111111111');
+    const runPromise = service.executeAgent(
+      'swap 0.1 SOL to USDC',
+      '11111111111111111111111111111111',
+    );
     const runId = (runStream.createRun as jest.Mock).mock.calls[0][0];
 
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1029,9 +1454,21 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
-    (parseIntentNode as jest.Mock).mockRejectedValue(new Error('parse exploded'));
+    (parseIntentNode as jest.Mock).mockRejectedValue(
+      new Error('parse exploded'),
+    );
 
     const result = await service.executeAgent(
       'swap 0.1 SOL to USDC',
@@ -1073,7 +1510,17 @@ describe('AgentService', () => {
     } as unknown as PolicyPrecheckService;
     const runStream = createRunStreamMock();
 
-    const service = new AgentService(txAssembler, policyPrecheck, runStream, mockLlmService, mockSolanaService, mockRouteSelectorService, mockToolRegistry, mockIntentClassifier, mockMarketContext);
+    const service = new AgentService(
+      txAssembler,
+      policyPrecheck,
+      runStream,
+      mockLlmService,
+      mockSolanaService,
+      mockRouteSelectorService,
+      mockToolRegistry,
+      mockIntentClassifier,
+      mockMarketContext,
+    );
 
     (parseIntentNode as jest.Mock).mockReturnValue(parsePromise);
 
@@ -1158,7 +1605,14 @@ describe('AgentService', () => {
       amountLamports: 1_000_000,
       protocol: 'spl_transfer',
       recipientPubkey: 'alice.skr',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
     const result = await service.executeAgent(
@@ -1166,7 +1620,9 @@ describe('AgentService', () => {
       '11111111111111111111111111111111',
     );
 
-    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenCalledWith('alice.skr');
+    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenCalledWith(
+      'alice.skr',
+    );
     expect(mockToolRegistry.dispatch).toHaveBeenCalledWith(
       'transfer',
       expect.objectContaining({
@@ -1185,17 +1641,19 @@ describe('AgentService', () => {
     const runStream = createRunStreamMock();
 
     const nameResolutionService = {
-      resolveNameOrAddress: jest.fn().mockImplementation(async (input: string) => {
-        const MAP: Record<string, string> = {
-          'alice.skr': 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
-          'bob.skr': 'DasLSgNnPyMmFFGNQf45jraj37GgnQZRaqQ5YptVVsVo',
-        };
-        return {
-          input,
-          address: MAP[input] ?? input,
-          source: 'sns_domain',
-        };
-      }),
+      resolveNameOrAddress: jest
+        .fn()
+        .mockImplementation(async (input: string) => {
+          const MAP: Record<string, string> = {
+            'alice.skr': 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+            'bob.skr': 'DasLSgNnPyMmFFGNQf45jraj37GgnQZRaqQ5YptVVsVo',
+          };
+          return {
+            input,
+            address: MAP[input] ?? input,
+            source: 'sns_domain',
+          };
+        }),
     };
 
     const service = new AgentService(
@@ -1225,7 +1683,14 @@ describe('AgentService', () => {
         { pubkey: 'alice.skr', amountLamports: 500_000_000 },
         { pubkey: 'bob.skr', amountLamports: 300_000_000 },
       ],
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
     const result = await service.executeAgent(
@@ -1233,8 +1698,14 @@ describe('AgentService', () => {
       '11111111111111111111111111111111',
     );
 
-    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenNthCalledWith(1, 'alice.skr');
-    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenNthCalledWith(2, 'bob.skr');
+    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenNthCalledWith(
+      1,
+      'alice.skr',
+    );
+    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenNthCalledWith(
+      2,
+      'bob.skr',
+    );
     expect(mockToolRegistry.dispatch).toHaveBeenCalledWith(
       'multi_send',
       expect.objectContaining({
@@ -1291,7 +1762,14 @@ describe('AgentService', () => {
       amountLamports: 1_000_000,
       protocol: 'spl_transfer',
       recipientPubkey: 'alice.skr',
-      steps: [{ type: 'step', node: 'parse_intent', status: 'success', label: 'parsed' }],
+      steps: [
+        {
+          type: 'step',
+          node: 'parse_intent',
+          status: 'success',
+          label: 'parsed',
+        },
+      ],
     });
 
     const result = await service.executeAgent(
@@ -1299,7 +1777,9 @@ describe('AgentService', () => {
       '11111111111111111111111111111111',
     );
 
-    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenCalledWith('alice.skr');
+    expect(nameResolutionService.resolveNameOrAddress).toHaveBeenCalledWith(
+      'alice.skr',
+    );
     expect(mockToolRegistry.dispatch).not.toHaveBeenCalled();
     expect(result.rejection).toEqual({
       reason: 'Recipient resolution failed: Could not resolve alice.skr',

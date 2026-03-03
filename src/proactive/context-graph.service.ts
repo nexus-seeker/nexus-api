@@ -23,15 +23,27 @@ export class ContextGraphService {
   async upsertWalletSnapshot(event: ProactiveEventCanonical): Promise<void> {
     const sourceEventId = `wallet:${event.wallet}`;
     const payloadRecord = this.getPayloadRecord(event.payload);
-    const balances = this.extractPayloadField(payloadRecord, ['balances', 'tokenBalances', 'nativeBalance']);
-    const exposure = this.extractPayloadField(payloadRecord, ['exposure', 'protocolExposure', 'positions']);
+    const balances = this.extractPayloadField(payloadRecord, [
+      'balances',
+      'tokenBalances',
+      'nativeBalance',
+    ]);
+    const exposure = this.extractPayloadField(payloadRecord, [
+      'exposure',
+      'protocolExposure',
+      'positions',
+    ]);
 
     const recentAction: Prisma.InputJsonObject = {
       source: event.source,
       sourceEventId: event.sourceEventId,
       kind: event.kind,
       eventAt: event.eventAt.toISOString(),
-      action: this.extractPayloadField(payloadRecord, ['action', 'type', 'description']),
+      action: this.extractPayloadField(payloadRecord, [
+        'action',
+        'type',
+        'description',
+      ]),
     };
 
     const snapshotPayload: Prisma.InputJsonObject = {
@@ -73,14 +85,20 @@ export class ContextGraphService {
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Failed to update context snapshot for ${event.wallet}: ${message}`);
+      this.logger.warn(
+        `Failed to update context snapshot for ${event.wallet}: ${message}`,
+      );
     }
   }
 
   private getPayloadRecord(
     payload: Prisma.InputJsonValue,
   ): Record<string, Prisma.InputJsonValue> | undefined {
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      Array.isArray(payload)
+    ) {
       return undefined;
     }
 

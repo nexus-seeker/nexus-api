@@ -10,7 +10,9 @@ describe('ProactiveFeedService', () => {
           id: 'rec-1',
           walletPubkey: 'wallet-1',
         }),
-        update: jest.fn().mockResolvedValue({ id: 'rec-1', status: 'rejected' }),
+        update: jest
+          .fn()
+          .mockResolvedValue({ id: 'rec-1', status: 'rejected' }),
       },
       recommendationFeedback: {
         create: jest.fn().mockResolvedValue({ id: 'feedback-1' }),
@@ -18,7 +20,10 @@ describe('ProactiveFeedService', () => {
     };
 
     const prisma = {
-      $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+      $transaction: jest.fn(
+        async (callback: (client: typeof tx) => Promise<unknown>) =>
+          callback(tx),
+      ),
     } as unknown as PrismaService;
 
     const service = new ProactiveFeedService(prisma);
@@ -87,7 +92,10 @@ describe('ProactiveFeedService', () => {
     });
 
     expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ recommendationId: 'rec-1', walletPubkey: 'wallet-1' }),
+      expect.objectContaining({
+        recommendationId: 'rec-1',
+        walletPubkey: 'wallet-1',
+      }),
     );
     expect(result).toEqual(
       expect.objectContaining({

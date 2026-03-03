@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
 import { PrismaService } from '../database/prisma.service';
 import { SolanaService } from '../solana/solana.service';
@@ -26,7 +31,9 @@ export class ReceiptReconcilerService implements OnModuleInit, OnModuleDestroy {
       this.isScheduledSyncInFlight = true;
       void this.syncRecentOwners()
         .catch((error) => {
-          this.logger.warn(`Scheduled receipt reconciliation failed: ${String(error)}`);
+          this.logger.warn(
+            `Scheduled receipt reconciliation failed: ${String(error)}`,
+          );
         })
         .finally(() => {
           this.isScheduledSyncInFlight = false;
@@ -41,9 +48,15 @@ export class ReceiptReconcilerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async syncOwner(pubkey: string, limit = DEFAULT_RECEIPTS_LIMIT): Promise<number> {
+  async syncOwner(
+    pubkey: string,
+    limit = DEFAULT_RECEIPTS_LIMIT,
+  ): Promise<number> {
     const owner = new PublicKey(pubkey);
-    const receipts = await this.solanaService.fetchReceiptsByOwner(owner, limit);
+    const receipts = await this.solanaService.fetchReceiptsByOwner(
+      owner,
+      limit,
+    );
 
     for (const receipt of receipts) {
       await this.prisma.receiptCache.upsert({
@@ -80,7 +93,10 @@ export class ReceiptReconcilerService implements OnModuleInit, OnModuleDestroy {
     return receipts.length;
   }
 
-  async syncRecentOwners(ownerLimit = 25, receiptLimit = DEFAULT_RECEIPTS_LIMIT): Promise<void> {
+  async syncRecentOwners(
+    ownerLimit = 25,
+    receiptLimit = DEFAULT_RECEIPTS_LIMIT,
+  ): Promise<void> {
     const owners = await this.prisma.receiptCache.findMany({
       select: { ownerPubkey: true },
       distinct: ['ownerPubkey'],
@@ -92,7 +108,9 @@ export class ReceiptReconcilerService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.syncOwner(owner.ownerPubkey, receiptLimit);
       } catch (error) {
-        this.logger.warn(`Failed to sync receipts for ${owner.ownerPubkey}: ${String(error)}`);
+        this.logger.warn(
+          `Failed to sync receipts for ${owner.ownerPubkey}: ${String(error)}`,
+        );
       }
     }
   }

@@ -24,7 +24,12 @@ describe('HistoryController', () => {
 
     const result = await controller.getHistory(TEST_PUBKEY, '50');
 
-    expect(historyService.getHistory).toHaveBeenCalledWith(TEST_PUBKEY, 50, undefined, undefined);
+    expect(historyService.getHistory).toHaveBeenCalledWith(
+      TEST_PUBKEY,
+      50,
+      undefined,
+      undefined,
+    );
     expect(result.messages).toBeDefined();
     expect(Array.isArray(result.messages)).toBe(true);
     expect(result.nextCursor).toBe(1700000000000);
@@ -39,7 +44,12 @@ describe('HistoryController', () => {
 
     await controller.getHistory(TEST_PUBKEY, '10', '1700000000000', 'msg-9');
 
-    expect(historyService.getHistory).toHaveBeenCalledWith(TEST_PUBKEY, 10, 1700000000000, 'msg-9');
+    expect(historyService.getHistory).toHaveBeenCalledWith(
+      TEST_PUBKEY,
+      10,
+      1700000000000,
+      'msg-9',
+    );
   });
 
   it('passes beforeTs-only cursor to service for spec compatibility', async () => {
@@ -50,7 +60,12 @@ describe('HistoryController', () => {
 
     await controller.getHistory(TEST_PUBKEY, '10', '1700000000000');
 
-    expect(historyService.getHistory).toHaveBeenCalledWith(TEST_PUBKEY, 10, 1700000000000, undefined);
+    expect(historyService.getHistory).toHaveBeenCalledWith(
+      TEST_PUBKEY,
+      10,
+      1700000000000,
+      undefined,
+    );
   });
 
   it('defaults limit to 50 when omitted', async () => {
@@ -61,7 +76,12 @@ describe('HistoryController', () => {
 
     await controller.getHistory(TEST_PUBKEY, undefined, undefined);
 
-    expect(historyService.getHistory).toHaveBeenCalledWith(TEST_PUBKEY, 50, undefined, undefined);
+    expect(historyService.getHistory).toHaveBeenCalledWith(
+      TEST_PUBKEY,
+      50,
+      undefined,
+      undefined,
+    );
   });
 
   it('caps and normalizes invalid limits', async () => {
@@ -73,8 +93,20 @@ describe('HistoryController', () => {
     await controller.getHistory(TEST_PUBKEY, '999', undefined);
     await controller.getHistory(TEST_PUBKEY, '0', undefined);
 
-    expect(historyService.getHistory).toHaveBeenNthCalledWith(1, TEST_PUBKEY, 100, undefined, undefined);
-    expect(historyService.getHistory).toHaveBeenNthCalledWith(2, TEST_PUBKEY, 1, undefined, undefined);
+    expect(historyService.getHistory).toHaveBeenNthCalledWith(
+      1,
+      TEST_PUBKEY,
+      100,
+      undefined,
+      undefined,
+    );
+    expect(historyService.getHistory).toHaveBeenNthCalledWith(
+      2,
+      TEST_PUBKEY,
+      1,
+      undefined,
+      undefined,
+    );
   });
 
   it('throws when limit is non-numeric', async () => {
@@ -83,7 +115,9 @@ describe('HistoryController', () => {
     };
     const controller = new HistoryController(historyService as any);
 
-    await expect(controller.getHistory(TEST_PUBKEY, '10abc')).rejects.toThrow(BadRequestException);
+    await expect(controller.getHistory(TEST_PUBKEY, '10abc')).rejects.toThrow(
+      BadRequestException,
+    );
     expect(historyService.getHistory).not.toHaveBeenCalled();
   });
 
@@ -93,7 +127,9 @@ describe('HistoryController', () => {
     };
     const controller = new HistoryController(historyService as any);
 
-    await expect(controller.getHistory(TEST_PUBKEY, '50', '1700000000000ms')).rejects.toThrow(BadRequestException);
+    await expect(
+      controller.getHistory(TEST_PUBKEY, '50', '1700000000000ms'),
+    ).rejects.toThrow(BadRequestException);
     expect(historyService.getHistory).not.toHaveBeenCalled();
   });
 
@@ -115,7 +151,9 @@ describe('HistoryController', () => {
     };
     const controller = new HistoryController(historyService as any);
 
-    await expect(controller.getHistory('', '50')).rejects.toThrow(BadRequestException);
+    await expect(controller.getHistory('', '50')).rejects.toThrow(
+      BadRequestException,
+    );
     expect(historyService.getHistory).not.toHaveBeenCalled();
   });
 });

@@ -27,18 +27,26 @@ export interface DispatchNotificationResult {
 export class NotificationDispatcherService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async dispatch(input: DispatchNotificationInput): Promise<DispatchNotificationResult> {
+  async dispatch(
+    input: DispatchNotificationInput,
+  ): Promise<DispatchNotificationResult> {
     const recommendationId = input.recommendationId.trim();
     const walletPubkey = input.walletPubkey.trim();
     const title = input.title.trim();
     const body = input.body.trim();
 
     if (!recommendationId || !walletPubkey || !title || !body) {
-      throw new BadRequestException('recommendationId, walletPubkey, title, and body are required');
+      throw new BadRequestException(
+        'recommendationId, walletPubkey, title, and body are required',
+      );
     }
 
     const threshold = this.resolveThreshold();
-    if (!input.shouldNotify || !Number.isFinite(input.confidence) || input.confidence < threshold) {
+    if (
+      !input.shouldNotify ||
+      !Number.isFinite(input.confidence) ||
+      input.confidence < threshold
+    ) {
       return {
         dispatched: false,
         reason: 'suppressed',
@@ -74,11 +82,14 @@ export class NotificationDispatcherService {
       });
 
       if (!response.ok) {
-        throw new Error(`OneSignal request failed with status ${response.status}`);
+        throw new Error(
+          `OneSignal request failed with status ${response.status}`,
+        );
       }
 
       const payload = (await response.json()) as { id?: unknown };
-      const providerMessageId = typeof payload.id === 'string' ? payload.id : undefined;
+      const providerMessageId =
+        typeof payload.id === 'string' ? payload.id : undefined;
       if (!providerMessageId) {
         throw new Error('OneSignal response missing notification id');
       }
@@ -123,14 +134,18 @@ export class NotificationDispatcherService {
     const restApiKey = process.env.ONESIGNAL_REST_API_KEY?.trim();
 
     if (!appId || !restApiKey) {
-      throw new Error('ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY are required');
+      throw new Error(
+        'ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY are required',
+      );
     }
 
     return { appId, restApiKey };
   }
 
   private resolveThreshold(): number {
-    const configured = Number(process.env.PROACTIVE_NOTIFICATION_CONFIDENCE_THRESHOLD);
+    const configured = Number(
+      process.env.PROACTIVE_NOTIFICATION_CONFIDENCE_THRESHOLD,
+    );
     if (!Number.isFinite(configured)) {
       return DEFAULT_CONFIDENCE_THRESHOLD;
     }

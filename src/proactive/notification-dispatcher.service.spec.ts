@@ -55,7 +55,10 @@ describe('NotificationDispatcherService', () => {
     });
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
-    const [url, request] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    const [url, request] = (global.fetch as jest.Mock).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
     expect(url).toContain('onesignal.com');
     expect(request.method).toBe('POST');
     expect(request.headers).toEqual(

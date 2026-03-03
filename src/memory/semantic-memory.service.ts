@@ -65,7 +65,7 @@ export class SemanticMemoryService {
       this.enabled = false;
       console.warn(
         '[SemanticMemoryService] No embedding key found (EMBEDDING_API_KEY / OPENAI_API_KEY not set). ' +
-        'Semantic memory is disabled. Set EMBEDDING_API_KEY in .env to enable.',
+          'Semantic memory is disabled. Set EMBEDDING_API_KEY in .env to enable.',
       );
     }
   }

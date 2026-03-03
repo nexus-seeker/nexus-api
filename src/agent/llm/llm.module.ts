@@ -3,7 +3,7 @@ import { LlmService } from './llm.service';
 
 @Global()
 @Module({
-    providers: [LlmService],
-    exports: [LlmService],
+  providers: [LlmService],
+  exports: [LlmService],
 })
-export class LlmModule { }
+export class LlmModule {}

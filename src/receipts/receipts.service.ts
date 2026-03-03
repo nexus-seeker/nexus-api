@@ -16,7 +16,10 @@ export class ReceiptsService {
     private readonly reconciler: ReceiptReconcilerService,
   ) {}
 
-  async getReceipts(pubkey: string, limit = DEFAULT_LIMIT): Promise<ReceiptDto[]> {
+  async getReceipts(
+    pubkey: string,
+    limit = DEFAULT_LIMIT,
+  ): Promise<ReceiptDto[]> {
     const normalizedLimit = this.normalizeLimit(limit);
 
     let cached = await this.prisma.receiptCache.findMany({
@@ -27,7 +30,9 @@ export class ReceiptsService {
 
     const newest = cached[0];
     const needsBootstrap = cached.length === 0;
-    const isStale = newest !== undefined && Date.now() - newest.updatedAt.getTime() > CACHE_STALE_MS;
+    const isStale =
+      newest !== undefined &&
+      Date.now() - newest.updatedAt.getTime() > CACHE_STALE_MS;
 
     if (needsBootstrap || isStale) {
       try {
@@ -38,7 +43,9 @@ export class ReceiptsService {
           take: normalizedLimit,
         });
       } catch (error) {
-        this.logger.warn(`Receipt reconciliation failed for ${pubkey}: ${String(error)}`);
+        this.logger.warn(
+          `Receipt reconciliation failed for ${pubkey}: ${String(error)}`,
+        );
       }
     }
 
@@ -82,7 +89,12 @@ export class ReceiptsService {
   }
 
   private toReceiptStatus(value: string): ReceiptDto['status'] {
-    if (value === 'Pending' || value === 'Completed' || value === 'Rejected' || value === 'Unknown') {
+    if (
+      value === 'Pending' ||
+      value === 'Completed' ||
+      value === 'Rejected' ||
+      value === 'Unknown'
+    ) {
       return value;
     }
 

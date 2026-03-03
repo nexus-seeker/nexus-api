@@ -25,6 +25,7 @@ import { GetPnlTool } from './tools/get-pnl.tool';
 import { NameResolutionService } from './name-resolution.service';
 import { IntentClassifierService } from './intent-classifier.service';
 import { MarketContextService } from './market-context.service';
+import { RejectionRecoveryService } from './rejection-recovery.service';
 
 const TOOL_PROVIDERS = [
   SwapTool,
@@ -40,7 +41,13 @@ const TOOL_PROVIDERS = [
 ];
 
 @Module({
-  imports: [LlmModule, DatabaseModule, ProtocolsModule, AnalysisModule, MemoryModule],
+  imports: [
+    LlmModule,
+    DatabaseModule,
+    ProtocolsModule,
+    AnalysisModule,
+    MemoryModule,
+  ],
   controllers: [AgentController],
   providers: [
     AgentService,
@@ -52,6 +59,7 @@ const TOOL_PROVIDERS = [
     NameResolutionService,
     IntentClassifierService,
     MarketContextService,
+    RejectionRecoveryService,
     ToolRegistry,
     ...TOOL_PROVIDERS,
   ],
@@ -65,6 +73,7 @@ const TOOL_PROVIDERS = [
     NameResolutionService,
     IntentClassifierService,
     MarketContextService,
+    RejectionRecoveryService,
     ToolRegistry,
   ],
 })
@@ -81,7 +90,7 @@ export class AgentModule implements OnModuleInit {
     private readonly tokenSafetyTool: TokenSafetyTool,
     private readonly compareYieldsTool: CompareYieldsTool,
     private readonly getPnlTool: GetPnlTool,
-  ) { }
+  ) {}
 
   onModuleInit(): void {
     for (const tool of [

@@ -4,8 +4,8 @@ import { DatabaseModule } from '../database/database.module';
 import { SemanticMemoryService } from './semantic-memory.service';
 
 @Module({
-    imports: [DatabaseModule],
-    providers: [UserMemoryService, SemanticMemoryService],
-    exports: [UserMemoryService, SemanticMemoryService],
+  imports: [DatabaseModule],
+  providers: [UserMemoryService, SemanticMemoryService],
+  exports: [UserMemoryService, SemanticMemoryService],
 })
-export class MemoryModule { }
+export class MemoryModule {}

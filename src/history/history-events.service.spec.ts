@@ -6,14 +6,22 @@ describe('HistoryEventsService', () => {
     const tx = {
       runEvent: {
         findFirst: jest.fn().mockResolvedValue({ seq: 2 }),
-        create: jest.fn().mockResolvedValue({ runId: 'run-1', seq: 3, eventType: 'run_started' }),
+        create: jest.fn().mockResolvedValue({
+          runId: 'run-1',
+          seq: 3,
+          eventType: 'run_started',
+        }),
       },
     };
 
     const prisma = {
-      $transaction: jest.fn().mockImplementation(async (callback: (client: typeof tx) => Promise<unknown>) => {
-        return callback(tx);
-      }),
+      $transaction: jest
+        .fn()
+        .mockImplementation(
+          async (callback: (client: typeof tx) => Promise<unknown>) => {
+            return callback(tx);
+          },
+        ),
     } as unknown as PrismaService;
 
     const service = new HistoryEventsService(prisma);
@@ -40,14 +48,22 @@ describe('HistoryEventsService', () => {
     const tx = {
       runEvent: {
         findFirst: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({ runId: 'run-1', seq: 1, eventType: 'run_started' }),
+        create: jest.fn().mockResolvedValue({
+          runId: 'run-1',
+          seq: 1,
+          eventType: 'run_started',
+        }),
       },
     };
 
     const prisma = {
-      $transaction: jest.fn().mockImplementation(async (callback: (client: typeof tx) => Promise<unknown>) => {
-        return callback(tx);
-      }),
+      $transaction: jest
+        .fn()
+        .mockImplementation(
+          async (callback: (client: typeof tx) => Promise<unknown>) => {
+            return callback(tx);
+          },
+        ),
     } as unknown as PrismaService;
 
     const service = new HistoryEventsService(prisma);
@@ -74,7 +90,11 @@ describe('HistoryEventsService', () => {
     const tx = {
       runEvent: {
         findFirst: jest.fn().mockResolvedValue({ seq: 0 }),
-        create: jest.fn().mockResolvedValue({ runId: 'run-1', seq: 1, eventType: 'run_started' }),
+        create: jest.fn().mockResolvedValue({
+          runId: 'run-1',
+          seq: 1,
+          eventType: 'run_started',
+        }),
       },
     };
 
@@ -82,9 +102,11 @@ describe('HistoryEventsService', () => {
       $transaction: jest
         .fn()
         .mockRejectedValueOnce({ code: 'P2034' })
-        .mockImplementation(async (callback: (client: typeof tx) => Promise<unknown>) => {
-          return callback(tx);
-        }),
+        .mockImplementation(
+          async (callback: (client: typeof tx) => Promise<unknown>) => {
+            return callback(tx);
+          },
+        ),
     } as unknown as PrismaService;
 
     const service = new HistoryEventsService(prisma);
@@ -105,7 +127,11 @@ describe('HistoryEventsService', () => {
     const tx = {
       runEvent: {
         findFirst: jest.fn().mockResolvedValue({ seq: 1 }),
-        create: jest.fn().mockResolvedValue({ runId: 'run-1', seq: 2, eventType: 'run_started' }),
+        create: jest.fn().mockResolvedValue({
+          runId: 'run-1',
+          seq: 2,
+          eventType: 'run_started',
+        }),
       },
     };
 
@@ -113,9 +139,11 @@ describe('HistoryEventsService', () => {
       $transaction: jest
         .fn()
         .mockRejectedValueOnce({ code: 'P2002' })
-        .mockImplementation(async (callback: (client: typeof tx) => Promise<unknown>) => {
-          return callback(tx);
-        }),
+        .mockImplementation(
+          async (callback: (client: typeof tx) => Promise<unknown>) => {
+            return callback(tx);
+          },
+        ),
     } as unknown as PrismaService;
 
     const service = new HistoryEventsService(prisma);

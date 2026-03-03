@@ -3,7 +3,7 @@ import { SolanaService } from './solana.service';
 
 @Global()
 @Module({
-    providers: [SolanaService],
-    exports: [SolanaService],
+  providers: [SolanaService],
+  exports: [SolanaService],
 })
-export class SolanaModule { }
+export class SolanaModule {}

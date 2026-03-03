@@ -99,7 +99,9 @@ describe('HistoryService', () => {
 
     await expect(
       service.getHistory('wallet-1', 50, 8640000000000001, 'msg-20'),
-    ).rejects.toThrow('beforeTs must be a valid unix timestamp in milliseconds');
+    ).rejects.toThrow(
+      'beforeTs must be a valid unix timestamp in milliseconds',
+    );
     expect(findMany).not.toHaveBeenCalled();
   });
 });

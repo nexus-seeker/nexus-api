@@ -6,9 +6,9 @@ export type LlmProvider = (typeof LLM_PROVIDERS)[number];
 
 // ── Configuration passed into adapters ──────────────────────────────
 export interface LlmConfig {
-    provider: LlmProvider;
-    apiKey: string | undefined;
-    model?: string;
+  provider: LlmProvider;
+  apiKey: string | undefined;
+  model?: string;
 }
 
 // ── Common interface satisfied by every LangChain chat model ────────

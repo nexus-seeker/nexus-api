@@ -34,7 +34,7 @@ export class TxAssemblerService {
   private readonly logger = new Logger(TxAssemblerService.name);
   private readonly maxRawTransactionBytes = 1232;
 
-  constructor(private readonly solanaService: SolanaService) { }
+  constructor(private readonly solanaService: SolanaService) {}
 
   private buildCheckAndRecordIxWithReceiptId(
     owner: PublicKey,
@@ -153,7 +153,7 @@ export class TxAssemblerService {
 
     this.logger.log(
       `Assembling multi-send: ${recipients.length} transfers, ` +
-      `total ${totalAmountLamports} lamports`,
+        `total ${totalAmountLamports} lamports`,
     );
 
     const txBase64 = await this.solanaService.buildVersionedTransaction(
@@ -165,13 +165,12 @@ export class TxAssemblerService {
     if (this.isSerializedTransactionTooLarge(txBase64)) {
       throw new Error(
         `Multi-send transaction exceeds Solana size limit — reduce recipient count ` +
-        `(max ~20 transfers per transaction)`,
+          `(max ~20 transfers per transaction)`,
       );
     }
 
     return txBase64;
   }
-
 
   async assembleTransaction(
     owner: PublicKey,
@@ -207,7 +206,7 @@ export class TxAssemblerService {
       const allInstructions = [checkAndRecordIx, ...jupiterIxs];
       this.logger.log(
         `Assembled ${allInstructions.length} instructions ` +
-        `(1 check_and_record + ${jupiterIxs.length} Jupiter)`,
+          `(1 check_and_record + ${jupiterIxs.length} Jupiter)`,
       );
 
       const txBase64 = await this.solanaService.buildVersionedTransaction(
@@ -352,7 +351,7 @@ export class TxAssemblerService {
 
     this.logger.log(
       `Assembled Raydium transaction with ${raydiumIxs.length} instructions ` +
-      `(1 check_and_record + ${raydiumIxs.length} Raydium)`,
+        `(1 check_and_record + ${raydiumIxs.length} Raydium)`,
     );
 
     return serialized;
@@ -372,7 +371,7 @@ export class TxAssemblerService {
     if (jupiterResult.swapTransaction && !jupiterResult.swapInstruction) {
       throw new Error(
         'Jupiter returned swapTransaction only; cannot prepend check_and_record. ' +
-        'Use swap-instructions endpoint.',
+          'Use swap-instructions endpoint.',
       );
     }
 
@@ -413,9 +412,9 @@ export class TxAssemblerService {
       candidate.setupInstructions == null
         ? undefined
         : this.assertInstructionList(
-          candidate.setupInstructions,
-          'setupInstructions',
-        );
+            candidate.setupInstructions,
+            'setupInstructions',
+          );
     const swapInstruction =
       candidate.swapInstruction == null
         ? undefined
@@ -424,9 +423,9 @@ export class TxAssemblerService {
       candidate.cleanupInstruction == null
         ? undefined
         : this.assertInstruction(
-          candidate.cleanupInstruction,
-          'cleanupInstruction',
-        );
+            candidate.cleanupInstruction,
+            'cleanupInstruction',
+          );
 
     if (
       candidate.swapTransaction != null &&

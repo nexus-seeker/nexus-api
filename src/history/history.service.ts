@@ -28,7 +28,10 @@ export class HistoryService {
               pubkey,
               OR: [
                 { eventAt: { lt: beforeCursor.beforeDate } },
-                { eventAt: beforeCursor.beforeDate, id: { lt: beforeCursor.beforeId } },
+                {
+                  eventAt: beforeCursor.beforeDate,
+                  id: { lt: beforeCursor.beforeId },
+                },
               ],
             };
 
@@ -39,9 +42,15 @@ export class HistoryService {
     });
 
     const hasMore = messagesDesc.length > normalizedLimit;
-    const pageDesc = hasMore ? messagesDesc.slice(0, normalizedLimit) : messagesDesc;
-    const nextCursorTs = hasMore ? pageDesc[pageDesc.length - 1]?.eventAt.getTime() : undefined;
-    const nextCursorId = hasMore ? pageDesc[pageDesc.length - 1]?.id : undefined;
+    const pageDesc = hasMore
+      ? messagesDesc.slice(0, normalizedLimit)
+      : messagesDesc;
+    const nextCursorTs = hasMore
+      ? pageDesc[pageDesc.length - 1]?.eventAt.getTime()
+      : undefined;
+    const nextCursorId = hasMore
+      ? pageDesc[pageDesc.length - 1]?.id
+      : undefined;
 
     return {
       messages: pageDesc.reverse().map((message) => this.toMessageDto(message)),
@@ -76,12 +85,16 @@ export class HistoryService {
     }
 
     if (!Number.isSafeInteger(beforeTs) || beforeTs <= 0) {
-      throw new BadRequestException('beforeTs must be a valid unix timestamp in milliseconds');
+      throw new BadRequestException(
+        'beforeTs must be a valid unix timestamp in milliseconds',
+      );
     }
 
     const beforeDate = new Date(beforeTs);
     if (Number.isNaN(beforeDate.getTime())) {
-      throw new BadRequestException('beforeTs must be a valid unix timestamp in milliseconds');
+      throw new BadRequestException(
+        'beforeTs must be a valid unix timestamp in milliseconds',
+      );
     }
 
     return { beforeDate, beforeId };
@@ -99,9 +112,12 @@ export class HistoryService {
     const payload = this.getPayloadRecord(message.payload);
     const steps = Array.isArray(payload?.steps) ? payload?.steps : undefined;
 
-    const rejectionReason = typeof payload?.reason === 'string' ? payload.reason : undefined;
+    const rejectionReason =
+      typeof payload?.reason === 'string' ? payload.reason : undefined;
     const rejectionPolicyField =
-      typeof payload?.policyField === 'string' ? payload.policyField : undefined;
+      typeof payload?.policyField === 'string'
+        ? payload.policyField
+        : undefined;
 
     const rejection =
       rejectionReason !== undefined
@@ -123,8 +139,14 @@ export class HistoryService {
     };
   }
 
-  private getPayloadRecord(payload: unknown): Record<string, unknown> | undefined {
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+  private getPayloadRecord(
+    payload: unknown,
+  ): Record<string, unknown> | undefined {
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      Array.isArray(payload)
+    ) {
       return undefined;
     }
 

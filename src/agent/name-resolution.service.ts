@@ -17,7 +17,10 @@ export class NameResolutionService {
   private readonly parser: TldParser;
   private readonly fallbackRpcUrl: string;
   private fallbackParser?: TldParser;
-  private readonly cache = new Map<string, { address: string; expiresAt: number }>();
+  private readonly cache = new Map<
+    string,
+    { address: string; expiresAt: number }
+  >();
   private readonly ttlMs: number;
 
   constructor(private readonly solanaService: SolanaService) {
@@ -26,10 +29,13 @@ export class NameResolutionService {
       process.env.NAME_RESOLUTION_MAINNET_RPC_URL ||
       'https://api.mainnet-beta.solana.com';
 
-    const configuredTtlMs = Number(process.env.NAME_RESOLUTION_TTL_MS ?? 120_000);
-    this.ttlMs = Number.isFinite(configuredTtlMs) && configuredTtlMs > 0
-      ? configuredTtlMs
-      : 120_000;
+    const configuredTtlMs = Number(
+      process.env.NAME_RESOLUTION_TTL_MS ?? 120_000,
+    );
+    this.ttlMs =
+      Number.isFinite(configuredTtlMs) && configuredTtlMs > 0
+        ? configuredTtlMs
+        : 120_000;
   }
 
   async resolveNameOrAddress(input: string): Promise<NameResolutionResult> {
@@ -61,10 +67,18 @@ export class NameResolutionService {
       };
     }
 
-    const primaryAddress = await this.tryResolveWithParser(this.parser, cacheKey, value);
+    const primaryAddress = await this.tryResolveWithParser(
+      this.parser,
+      cacheKey,
+      value,
+    );
     const resolvedAddress =
       primaryAddress ||
-      (await this.tryResolveWithParser(this.getFallbackParser(), cacheKey, value));
+      (await this.tryResolveWithParser(
+        this.getFallbackParser(),
+        cacheKey,
+        value,
+      ));
 
     if (!resolvedAddress) {
       throw new Error(`Could not resolve ${value}`);
@@ -109,7 +123,9 @@ export class NameResolutionService {
       return owner.toBase58();
     } catch (error: any) {
       const message = error?.message || 'unknown parser error';
-      this.logger.warn(`Name resolution parser error for ${originalInput}: ${message}`);
+      this.logger.warn(
+        `Name resolution parser error for ${originalInput}: ${message}`,
+      );
       return undefined;
     }
   }
