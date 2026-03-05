@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { TldParser } from '@onsol/tldparser';
 import { SolanaService } from '../solana/solana.service';
+import { PrismaService } from '../database/prisma.service';
 
 export type NameResolutionSource = 'raw_address' | 'sns_domain';
 
@@ -23,7 +24,10 @@ export class NameResolutionService {
   >();
   private readonly ttlMs: number;
 
-  constructor(private readonly solanaService: SolanaService) {
+  constructor(
+    private readonly solanaService: SolanaService,
+    private readonly prisma: PrismaService,
+  ) {
     this.parser = new TldParser(this.solanaService.getConnection());
     this.fallbackRpcUrl =
       process.env.NAME_RESOLUTION_MAINNET_RPC_URL ||
@@ -67,13 +71,26 @@ export class NameResolutionService {
       };
     }
 
-    const primaryAddress = await this.tryResolveWithParser(
+    const primaryAddress = await this.tryResolveSkr(value);
+    if (primaryAddress) {
+      this.cache.set(cacheKey, {
+        address: primaryAddress,
+        expiresAt: Date.now() + this.ttlMs,
+      });
+      return {
+        input: value,
+        address: primaryAddress,
+        source: 'sns_domain',
+      };
+    }
+
+    const tldAddress = await this.tryResolveWithParser(
       this.parser,
       cacheKey,
       value,
     );
     const resolvedAddress =
-      primaryAddress ||
+      tldAddress ||
       (await this.tryResolveWithParser(
         this.getFallbackParser(),
         cacheKey,
@@ -134,6 +151,26 @@ export class NameResolutionService {
     try {
       return new PublicKey(input).toBase58();
     } catch {
+      return undefined;
+    }
+  }
+
+  private async tryResolveSkr(input: string): Promise<string | undefined> {
+    if (!input.toLowerCase().endsWith('.skr')) {
+      return undefined;
+    }
+
+    const seekerId = input.toLowerCase().replace(/\.skr$/, '');
+    try {
+      const cached = await this.prisma.receiptCache.findFirst({
+        where: { seekerId },
+        select: { ownerPubkey: true },
+        orderBy: { timestamp: 'desc' },
+      });
+
+      return cached?.ownerPubkey;
+    } catch (error: any) {
+      this.logger.warn(`Failed to resolve .skr from DB: ${error.message}`);
       return undefined;
     }
   }

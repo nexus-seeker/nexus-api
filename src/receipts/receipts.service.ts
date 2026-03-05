@@ -5,7 +5,6 @@ import { ReceiptReconcilerService } from './receipt-reconciler.service';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
-const CACHE_STALE_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class ReceiptsService {
@@ -28,25 +27,17 @@ export class ReceiptsService {
       take: normalizedLimit,
     });
 
-    const newest = cached[0];
-    const needsBootstrap = cached.length === 0;
-    const isStale =
-      newest !== undefined &&
-      Date.now() - newest.updatedAt.getTime() > CACHE_STALE_MS;
-
-    if (needsBootstrap || isStale) {
-      try {
-        await this.reconciler.syncOwner(pubkey, normalizedLimit);
-        cached = await this.prisma.receiptCache.findMany({
-          where: { ownerPubkey: pubkey },
-          orderBy: [{ timestamp: 'desc' }, { updatedAt: 'desc' }],
-          take: normalizedLimit,
-        });
-      } catch (error) {
-        this.logger.warn(
-          `Receipt reconciliation failed for ${pubkey}: ${String(error)}`,
-        );
-      }
+    try {
+      await this.reconciler.syncOwner(pubkey, normalizedLimit);
+      cached = await this.prisma.receiptCache.findMany({
+        where: { ownerPubkey: pubkey },
+        orderBy: [{ timestamp: 'desc' }, { updatedAt: 'desc' }],
+        take: normalizedLimit,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Receipt reconciliation failed for ${pubkey}: ${String(error)}`,
+      );
     }
 
     return cached.map((receipt) => ({
