@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, RequestMethod } from '@nestjs/common';
+import { LoggerModule } from 'nestjs-pino';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AgentModule } from './agent/agent.module';
@@ -12,6 +13,20 @@ import { ProactiveModule } from './proactive/proactive.module';
 
 @Module({
   imports: [
+    LoggerModule.forRoot({
+      pinoHttp: {
+        transport:
+          process.env.NODE_ENV !== 'production'
+            ? { target: 'pino-pretty', options: { colorize: true } }
+            : undefined,
+        level: process.env.LOG_LEVEL || 'info',
+        customLogLevel: (req, res, err) => {
+          if (res?.statusCode >= 400 && res?.statusCode < 500) return 'warn';
+          if (res?.statusCode >= 500 || err) return 'error';
+          return 'silent';
+        },
+      },
+    }),
     SolanaModule,
     DatabaseModule,
     AgentModule,
@@ -24,4 +39,4 @@ import { ProactiveModule } from './proactive/proactive.module';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule { }
+export class AppModule {}

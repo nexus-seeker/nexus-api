@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Prisma, ProactiveRecommendationStatus } from '@prisma/client';
 import type {
   ProactiveFeedResponse,
@@ -24,7 +28,11 @@ export class ProactiveFeedService {
     private readonly notificationDispatcher?: NotificationDispatcherService,
   ) {}
 
-  async getFeed(pubkey: string, threadId?: string, limit = DEFAULT_FEED_LIMIT): Promise<ProactiveFeedResponse> {
+  async getFeed(
+    pubkey: string,
+    threadId?: string,
+    limit = DEFAULT_FEED_LIMIT,
+  ): Promise<ProactiveFeedResponse> {
     const normalizedPubkey = pubkey.trim();
     if (!normalizedPubkey) {
       throw new BadRequestException('pubkey query parameter is required');
@@ -62,7 +70,9 @@ export class ProactiveFeedService {
     }
 
     if (!TERMINAL_OUTCOMES.has(outcome)) {
-      throw new BadRequestException('outcome must be approved, rejected, or ignored');
+      throw new BadRequestException(
+        'outcome must be approved, rejected, or ignored',
+      );
     }
 
     const reason = request.reason?.trim();
@@ -98,7 +108,9 @@ export class ProactiveFeedService {
     };
   }
 
-  async dispatchNotification(input: DispatchNotificationInput): Promise<DispatchNotificationResult> {
+  async dispatchNotification(
+    input: DispatchNotificationInput,
+  ): Promise<DispatchNotificationResult> {
     if (!this.notificationDispatcher) {
       return {
         dispatched: false,
@@ -133,7 +145,9 @@ export class ProactiveFeedService {
     };
   }
 
-  private parseActions(actions: Prisma.JsonValue): ProactiveRecommendationActionDto[] {
+  private parseActions(
+    actions: Prisma.JsonValue,
+  ): ProactiveRecommendationActionDto[] {
     if (!Array.isArray(actions)) {
       return [];
     }
@@ -142,7 +156,11 @@ export class ProactiveFeedService {
 
     return actions
       .map((action) => {
-        if (typeof action !== 'object' || action === null || Array.isArray(action)) {
+        if (
+          typeof action !== 'object' ||
+          action === null ||
+          Array.isArray(action)
+        ) {
           return null;
         }
 
@@ -163,7 +181,9 @@ export class ProactiveFeedService {
         }
 
         const payload =
-          typeof raw.payload === 'object' && raw.payload !== null && !Array.isArray(raw.payload)
+          typeof raw.payload === 'object' &&
+          raw.payload !== null &&
+          !Array.isArray(raw.payload)
             ? (raw.payload as Record<string, unknown>)
             : undefined;
 
@@ -176,6 +196,8 @@ export class ProactiveFeedService {
 
         return parsed;
       })
-      .filter((action): action is ProactiveRecommendationActionDto => action !== null);
+      .filter(
+        (action): action is ProactiveRecommendationActionDto => action !== null,
+      );
   }
 }

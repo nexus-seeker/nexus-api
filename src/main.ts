@@ -5,9 +5,12 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as dotenv from 'dotenv';
 import { RpcErrorFilter } from './common/filters/rpc-error.filter';
 
+import { Logger } from 'nestjs-pino';
+
 async function bootstrap() {
   dotenv.config();
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
 
   // Enable CORS
   app.enableCors();
@@ -21,7 +24,9 @@ async function bootstrap() {
   // Swagger setup
   const config = new DocumentBuilder()
     .setTitle('Kawula Agentic API')
-    .setDescription('The API documentation for the LangGraph-powered Kawula Agent')
+    .setDescription(
+      'The API documentation for the LangGraph-powered Kawula Agent',
+    )
     .setVersion('1.0')
     .addTag('intent')
     .build();

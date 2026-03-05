@@ -1,7 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
-import { ContextGraphService, ProactiveEventCanonical } from './context-graph.service';
+import {
+  ContextGraphService,
+  ProactiveEventCanonical,
+} from './context-graph.service';
 
 export interface IngestProactiveEventInput {
   wallet: string;
@@ -25,7 +28,9 @@ export class EventIntakeService {
     private readonly contextGraphService: ContextGraphService,
   ) {}
 
-  async ingest(input: IngestProactiveEventInput): Promise<IngestProactiveEventResult> {
+  async ingest(
+    input: IngestProactiveEventInput,
+  ): Promise<IngestProactiveEventResult> {
     const event = this.normalize(input);
 
     const existing = await this.prisma.proactiveEvent.findUnique({
@@ -83,7 +88,10 @@ export class EventIntakeService {
   private normalize(input: IngestProactiveEventInput): ProactiveEventCanonical {
     const wallet = this.requireTrimmed(input.wallet, 'wallet');
     const source = this.requireTrimmed(input.source, 'source');
-    const sourceEventId = this.requireTrimmed(input.sourceEventId, 'sourceEventId');
+    const sourceEventId = this.requireTrimmed(
+      input.sourceEventId,
+      'sourceEventId',
+    );
     const kind = this.requireTrimmed(input.kind, 'kind');
     const threadId = input.threadId?.trim();
     const payload = this.normalizePayload(input.payload);
@@ -122,7 +130,9 @@ export class EventIntakeService {
     return parsed;
   }
 
-  private normalizePayload(payload: Prisma.InputJsonValue): Prisma.InputJsonValue {
+  private normalizePayload(
+    payload: Prisma.InputJsonValue,
+  ): Prisma.InputJsonValue {
     if (payload === null || payload === undefined) {
       return {};
     }

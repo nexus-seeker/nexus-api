@@ -3,8 +3,11 @@ import type { LlmClient } from './llm/llm.interface';
 import type { RouteSelectorService } from '../protocols/route-selector.service';
 import { PublicKey } from '@solana/web3.js';
 import * as dotenv from 'dotenv';
+import { Logger } from '@nestjs/common';
 
 dotenv.config();
+
+const logger = new Logger('IntentParser');
 
 // ─── Token Mint Map ────────────────────────────────────────────────
 
@@ -55,6 +58,153 @@ function extractPubkeyFromIntent(intent: string): string | undefined {
   return undefined;
 }
 
+function normalizeDomain(input?: string): string | undefined {
+  if (!input) {
+    return undefined;
+  }
+
+  const cleaned = input
+    .trim()
+    .toLowerCase()
+    .replace(/^["'`(\[]+/, '')
+    .replace(/["'`),.!?;:\]]+$/, '');
+
+  if (!cleaned) {
+    return undefined;
+  }
+
+  const domainRegex =
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:skr|sol)$/i;
+  return domainRegex.test(cleaned) ? cleaned : undefined;
+}
+
+function extractDomainFromIntent(intent: string): string | undefined {
+  const matches = intent.match(
+    /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:skr|sol))\b/gi,
+  );
+  if (!matches || matches.length === 0) {
+    return undefined;
+  }
+
+  const candidate = matches[matches.length - 1];
+  return normalizeDomain(candidate);
+}
+
+function pickRecipientFromParsedPayload(parsed: ParsedIntentPayload): string | undefined {
+  const candidates = [
+    parsed.recipientPubkey,
+    parsed.recipient,
+    parsed.to,
+    parsed.receiver,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') {
+      continue;
+    }
+
+    const trimmed = candidate.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeProtocol(
+  action: string | undefined,
+  protocol: unknown,
+): string | undefined {
+  const raw = String(protocol || action || '')
+    .trim()
+    .toLowerCase();
+
+  if (!raw) {
+    return undefined;
+  }
+
+  if (raw === 'transfer' || raw === 'spl-transfer' || raw === 'spltransfer') {
+    return 'spl_transfer';
+  }
+
+  if (raw === 'swap' || raw === 'jupiter' || raw === 'jup') {
+    return 'jupiter';
+  }
+
+  if (raw === 'multi-send' || raw === 'multisend') {
+    return 'multi_send';
+  }
+
+  return raw;
+}
+
+function parsePositiveNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+    return value;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+
+  const direct = Number(trimmed);
+  if (Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+
+  const match = trimmed.match(/((?:\d+(?:\.\d+)?)|(?:\.\d+))/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function extractAmountFromIntent(
+  intent: string,
+): { value: number; unit: 'sol' | 'lamports' } | null {
+  const match = intent.match(
+    /((?:\d+(?:\.\d+)?)|(?:\.\d+))\s*(sol|lamports?)\b/i,
+  );
+  if (!match?.[1] || !match?.[2]) {
+    return null;
+  }
+
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  const unit = /lamports?/i.test(match[2]) ? 'lamports' : 'sol';
+  return { value, unit };
+}
+
+function isSelfWalletAnalyzeIntent(intent: string): boolean {
+  const lowered = intent.toLowerCase();
+  const hasWallet = lowered.includes('wallet');
+  const hasAnalyzeVerb =
+    lowered.includes('analy') ||
+    lowered.includes('review') ||
+    lowered.includes('check');
+  const hasSelfReference =
+    lowered.includes('my wallet') || lowered.includes('my');
+  return hasWallet && hasAnalyzeVerb && hasSelfReference;
+}
+
 // ─── Node 1: Intent Parser ─────────────────────────────────────────
 
 export async function parseIntentNode(
@@ -70,9 +220,7 @@ export async function parseIntentNode(
   };
 
   try {
-    const memoryPrefix = memoryContext
-      ? `${memoryContext}\n\n`
-      : '';
+    const memoryPrefix = memoryContext ? `${memoryContext}\n\n` : '';
 
     const response = await llm.invoke([
       {
@@ -102,7 +250,33 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
 
     const parsed = JSON.parse(jsonMatch[0]);
 
+    logger.debug(`[${state.runId}] LLM raw response: ${content}`);
+    logger.debug(
+      `[${state.runId}] LLM parsed payload: ${JSON.stringify(parsed)}`,
+    );
+
     if (parsed.error) {
+      if (isSelfWalletAnalyzeIntent(state.intent)) {
+        return {
+          action: 'analyze_wallet',
+          analysisType: 'wallet',
+          analysisSubject: state.pubkey,
+          steps: [
+            {
+              ...step,
+              status: 'success',
+              label:
+                'Parsed intent for action: analyze_wallet (using connected wallet)',
+              payload: {
+                action: 'analyze_wallet',
+                subject: state.pubkey,
+                fallback: 'self_wallet_default',
+              },
+            },
+          ],
+        };
+      }
+
       return {
         policyValid: false,
         rejectionReason: parsed.error,
@@ -140,25 +314,52 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
     // Some tools still expect amountLamports instead of amountSOL directly in the state,
     // (though the tool-calling refactor now passes the whole payload).
     let amountLamports = 0;
-    if (parsed.amountLamports !== undefined && parsed.amountLamports !== null) {
-      amountLamports = Number(parsed.amountLamports);
-    } else if (parsed.amountSOL !== undefined && parsed.amountSOL !== null) {
-      amountLamports = Math.round(Number(parsed.amountSOL) * 1e9);
-    } else if (parsed.amount !== undefined && parsed.amount !== null) {
-      // Sometimes LLM just emits "amount"
-      amountLamports = Math.round(Number(parsed.amount) * 1e9);
+    const parsedAmountLamports = parsePositiveNumber(parsed.amountLamports);
+    if (parsedAmountLamports !== null) {
+      amountLamports = Math.round(parsedAmountLamports);
+      logger.debug(`[${state.runId}] Using amountLamports: ${amountLamports}`);
+    } else {
+      const parsedAmountSOL = parsePositiveNumber(parsed.amountSOL);
+      if (parsedAmountSOL !== null) {
+        amountLamports = Math.round(parsedAmountSOL * 1e9);
+        logger.debug(
+          `[${state.runId}] Converted amountSOL ${parsed.amountSOL} to lamports: ${amountLamports}`,
+        );
+      } else {
+        const parsedGenericAmount = parsePositiveNumber(parsed.amount);
+        if (parsedGenericAmount !== null) {
+          amountLamports = Math.round(parsedGenericAmount * 1e9);
+          logger.debug(
+            `[${state.runId}] Converted amount ${parsed.amount} to lamports: ${amountLamports}`,
+          );
+        } else {
+          const fallbackAmount = extractAmountFromIntent(state.intent);
+          if (fallbackAmount) {
+            amountLamports = Math.round(
+              fallbackAmount.unit === 'lamports'
+                ? fallbackAmount.value
+                : fallbackAmount.value * 1e9,
+            );
+            logger.debug(
+              `[${state.runId}] Derived amount from intent text: ${amountLamports} lamports`,
+            );
+          } else {
+            logger.warn(
+              `[${state.runId}] No valid amount found in parser payload or intent text`,
+            );
+          }
+        }
+      }
     }
 
     // Dynamic resolution of protocol/token/etc.
-    let protocol = parsed.protocol || parsed.action;
-    if (protocol === 'transfer') {
-      protocol = 'spl_transfer'; // Align with on-chain representation
-    }
+    const protocol = normalizeProtocol(parsed.action, parsed.protocol);
     const tokenIn = parsed.tokenIn?.toUpperCase() || undefined;
     const tokenOut = parsed.tokenOut?.toUpperCase() || undefined;
-    const recipientPubkey = parsed.recipientPubkey
-      ? normalizePubkey(parsed.recipientPubkey) || parsed.recipientPubkey
-      : extractPubkeyFromIntent(state.intent);
+    const parsedRecipient = pickRecipientFromParsedPayload(parsed);
+    const recipientPubkey = parsedRecipient
+      ? normalizePubkey(parsedRecipient) || normalizeDomain(parsedRecipient)
+      : extractPubkeyFromIntent(state.intent) || extractDomainFromIntent(state.intent);
 
     return {
       action: parsed.action,
@@ -304,7 +505,7 @@ export async function selectRouteNode(
         : result.jupiterQuote) as Record<string, unknown> | undefined,
       raydiumInstructions: result.raydiumInstructions ?? undefined,
       jupiterInstructions: result.jupiterInstructions as
-        | { swapTransaction?: string;[key: string]: unknown }
+        | { swapTransaction?: string; [key: string]: unknown }
         | undefined,
       addressLookupTables: result.addressLookupTables,
       routeOutAmount: result.outAmount,
@@ -580,10 +781,13 @@ export async function synthesizeResponseNode(
   };
 
   try {
-    const memoryPrefix = memoryContext ? `User context:\n${memoryContext}\n\n` : '';
+    const memoryPrefix = memoryContext
+      ? `User context:\n${memoryContext}\n\n`
+      : '';
     // Omit massive hex strings from the tool result to save tokens
     const safeToolResult = { ...toolResult };
-    if (safeToolResult.unsignedTxBase64) safeToolResult.unsignedTxBase64 = '<base64_omitted>';
+    if (safeToolResult.unsignedTxBase64)
+      safeToolResult.unsignedTxBase64 = '<base64_omitted>';
 
     const toolResultStr = JSON.stringify(safeToolResult, null, 2);
 
@@ -607,9 +811,10 @@ User original intent: ${state.intent}`,
       },
     ]);
 
-    const agentMessage = typeof response.content === 'string'
-      ? response.content
-      : JSON.stringify(response.content);
+    const agentMessage =
+      typeof response.content === 'string'
+        ? response.content
+        : JSON.stringify(response.content);
 
     return {
       agentMessage,
@@ -624,7 +829,8 @@ User original intent: ${state.intent}`,
   } catch (err: any) {
     // Non-fatal, just log and fallback
     return {
-      agentMessage: 'Action completed. Check your wallet or activity feed for details.',
+      agentMessage:
+        'Action completed. Check your wallet or activity feed for details.',
       steps: [
         { ...step, status: 'success', label: 'Response generation skipped' },
       ],

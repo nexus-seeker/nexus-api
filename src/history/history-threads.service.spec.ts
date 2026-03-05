@@ -30,6 +30,13 @@ describe('HistoryThreadsService', () => {
     expect(findMany).toHaveBeenCalledWith({
       where: { walletPubkey: 'wallet' },
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      include: {
+        messages: {
+          where: { role: 'user' },
+          orderBy: { createdAt: 'asc' },
+          take: 1,
+        },
+      },
     });
     expect(result[0].id).toBe('t2');
   });

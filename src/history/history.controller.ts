@@ -1,4 +1,11 @@
-import { BadRequestException, Controller, Get, Optional, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Optional,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import type { ConversationThreadDto, HistoryResponse } from '../contracts/mvp';
 import { HistoryService } from './history.service';
@@ -28,7 +35,10 @@ export class HistoryController {
     }
 
     const parsedLimit = this.parseStrictInteger(limit, 'limit');
-    const normalizedLimit = Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, parsedLimit));
+    const normalizedLimit = Math.min(
+      MAX_LIMIT,
+      Math.max(MIN_LIMIT, parsedLimit),
+    );
 
     let parsedBeforeTs: number | undefined;
     if (beforeTs !== undefined) {
@@ -37,12 +47,16 @@ export class HistoryController {
         'beforeTs must be a positive unix timestamp in milliseconds',
       );
       if (parsedBeforeTs <= 0) {
-        throw new BadRequestException('beforeTs must be a positive unix timestamp in milliseconds');
+        throw new BadRequestException(
+          'beforeTs must be a positive unix timestamp in milliseconds',
+        );
       }
 
       const beforeDate = new Date(parsedBeforeTs);
       if (Number.isNaN(beforeDate.getTime())) {
-        throw new BadRequestException('beforeTs must be a positive unix timestamp in milliseconds');
+        throw new BadRequestException(
+          'beforeTs must be a positive unix timestamp in milliseconds',
+        );
       }
     } else if (beforeId === undefined) {
       parsedBeforeTs = undefined;
@@ -54,15 +68,24 @@ export class HistoryController {
     if (beforeId !== undefined) {
       parsedBeforeId = beforeId.trim();
       if (parsedBeforeId.length === 0) {
-        throw new BadRequestException('beforeId must be a non-empty message id');
+        throw new BadRequestException(
+          'beforeId must be a non-empty message id',
+        );
       }
     }
 
-    return this.historyService.getHistory(pubkey, normalizedLimit, parsedBeforeTs, parsedBeforeId);
+    return this.historyService.getHistory(
+      pubkey,
+      normalizedLimit,
+      parsedBeforeTs,
+      parsedBeforeId,
+    );
   }
 
   @Get('threads')
-  async getThreads(@Query('pubkey') pubkey: string): Promise<ConversationThreadDto[]> {
+  async getThreads(
+    @Query('pubkey') pubkey: string,
+  ): Promise<ConversationThreadDto[]> {
     if (typeof pubkey !== 'string' || pubkey.trim().length === 0) {
       throw new BadRequestException('pubkey query parameter is required');
     }

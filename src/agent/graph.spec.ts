@@ -1,4 +1,9 @@
-import { assembleTxNode, buildTransactionNode, parseIntentNode, policyRouter } from './graph';
+import {
+  assembleTxNode,
+  buildTransactionNode,
+  parseIntentNode,
+  policyRouter,
+} from './graph';
 import type { AgentState } from './state';
 import type { LlmClient } from './llm/llm.interface';
 
@@ -41,6 +46,24 @@ describe('parseIntentNode', () => {
     expect(result.protocol).toBe('jupiter');
   });
 
+  it('normalizes swap protocol alias to jupiter for policy checks', async () => {
+    mockInvoke.mockResolvedValue({
+      content: JSON.stringify({
+        action: 'swap',
+        tokenIn: 'SOL',
+        tokenOut: 'USDC',
+        amountSOL: 0.1,
+        protocol: 'swap',
+      }),
+    });
+
+    const result = await parseIntentNode(makeState(), mockLlm, '');
+
+    expect(result.rejectionReason).toBeUndefined();
+    expect(result.action).toBe('swap');
+    expect(result.protocol).toBe('jupiter');
+  });
+
   it('accepts transfer payloads where tokenOut is null', async () => {
     mockInvoke.mockResolvedValue({
       content: JSON.stringify({
@@ -54,7 +77,8 @@ describe('parseIntentNode', () => {
 
     const result = await parseIntentNode(
       {
-        intent: 'Transfer 0.001 SOL to EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+        intent:
+          'Transfer 0.001 SOL to EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
         pubkey: 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
         runId: 'run-id',
         steps: [],
@@ -64,13 +88,101 @@ describe('parseIntentNode', () => {
 
     expect(result.rejectionReason).toBeUndefined();
     expect(result.protocol).toBe('spl_transfer');
-    expect(result.recipientPubkey).toBe('EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ');
+    expect(result.recipientPubkey).toBe(
+      'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+    );
+  });
+
+  it('parses transfer amount when amountSOL comes as a unit string', async () => {
+    mockInvoke.mockResolvedValue({
+      content: JSON.stringify({
+        action: 'transfer',
+        tokenIn: 'SOL',
+        tokenOut: null,
+        amountSOL: '0.1 sol',
+        protocol: 'spl_transfer',
+        recipientPubkey: 'bene.skr',
+      }),
+    });
+
+    const result = await parseIntentNode(
+      {
+        intent: 'can you transfer 0.1 sol to bene.skr',
+        pubkey: '11111111111111111111111111111111',
+        runId: 'run-id',
+        steps: [],
+      },
+      mockLlm,
+      '',
+    );
+
+    expect(result.rejectionReason).toBeUndefined();
+    expect(result.protocol).toBe('spl_transfer');
+    expect(result.recipientPubkey).toBe('bene.skr');
+    expect(result.amountLamports).toBe(100_000_000);
+  });
+
+  it('extracts .skr recipient from intent text when parser omits recipient field', async () => {
+    mockInvoke.mockResolvedValue({
+      content: JSON.stringify({
+        action: 'transfer',
+        tokenIn: 'SOL',
+        tokenOut: null,
+        amountSOL: 0.1,
+        protocol: 'spl_transfer',
+      }),
+    });
+
+    const result = await parseIntentNode(
+      {
+        intent: 'can you transfer 0.1 sol to bene.skr',
+        pubkey: '11111111111111111111111111111111',
+        runId: 'run-id',
+        steps: [],
+      },
+      mockLlm,
+      '',
+    );
+
+    expect(result.rejectionReason).toBeUndefined();
+    expect(result.protocol).toBe('spl_transfer');
+    expect(result.recipientPubkey).toBe('bene.skr');
+  });
+
+  it('accepts recipient alias field from parser payload', async () => {
+    mockInvoke.mockResolvedValue({
+      content: JSON.stringify({
+        action: 'transfer',
+        tokenIn: 'SOL',
+        tokenOut: null,
+        amountSOL: 0.1,
+        protocol: 'spl_transfer',
+        recipient: 'bene.skr',
+      }),
+    });
+
+    const result = await parseIntentNode(
+      {
+        intent: 'can you transfer 0.1 sol to bene.skr',
+        pubkey: '11111111111111111111111111111111',
+        runId: 'run-id',
+        steps: [],
+      },
+      mockLlm,
+      '',
+    );
+
+    expect(result.rejectionReason).toBeUndefined();
+    expect(result.protocol).toBe('spl_transfer');
+    expect(result.recipientPubkey).toBe('bene.skr');
   });
 
   it('rejects when LLM returns an error field', async () => {
-    mockInvoke.mockResolvedValue({ content: JSON.stringify({ error: 'ambiguous intent' }) });
+    mockInvoke.mockResolvedValue({
+      content: JSON.stringify({ error: 'ambiguous intent' }),
+    });
 
-    const result = await parseIntentNode(makeState(), mockLlm);
+    const result = await parseIntentNode(makeState(), mockLlm, '');
 
     expect(result.policyValid).toBe(false);
     expect(result.rejectionField).toBe('intent');
@@ -80,7 +192,7 @@ describe('parseIntentNode', () => {
   it('rejects when LLM response contains no JSON', async () => {
     mockInvoke.mockResolvedValue({ content: 'sorry I cannot help with that' });
 
-    const result = await parseIntentNode(makeState(), mockLlm);
+    const result = await parseIntentNode(makeState(), mockLlm, '');
 
     expect(result.policyValid).toBe(false);
     expect(result.rejectionField).toBe('intent');
@@ -89,10 +201,30 @@ describe('parseIntentNode', () => {
   it('rejects when LLM throws', async () => {
     mockInvoke.mockRejectedValue(new Error('network timeout'));
 
-    const result = await parseIntentNode(makeState(), mockLlm);
+    const result = await parseIntentNode(makeState(), mockLlm, '');
 
     expect(result.policyValid).toBe(false);
     expect(result.rejectionReason).toContain('network timeout');
+  });
+
+  it('falls back to connected wallet for "analyze my wallet" when parser asks for address', async () => {
+    mockInvoke.mockResolvedValue({
+      content: JSON.stringify({
+        error: 'Please provide your wallet address for analysis.',
+      }),
+    });
+
+    const state = makeState('Analyze my wallet activity');
+    state.pubkey = 'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ';
+
+    const result = await parseIntentNode(state, mockLlm, '');
+
+    expect(result.rejectionReason).toBeUndefined();
+    expect(result.action).toBe('analyze_wallet');
+    expect(result.analysisSubject).toBe(
+      'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+    );
+    expect(result.steps?.[0]?.status).toBe('success');
   });
 });
 
@@ -110,7 +242,9 @@ describe('assembleTxNode', () => {
 
     expect(result.policyValid).toBe(false);
     expect(result.rejectionField).toBe('tx_assembly');
-    expect(result.rejectionReason).toContain('No valid Jupiter swap transaction');
+    expect(result.rejectionReason).toContain(
+      'No valid Jupiter swap transaction',
+    );
     expect(result.unsignedTxBase64).toBeUndefined();
   });
 
@@ -203,7 +337,8 @@ describe('buildTransactionNode', () => {
 
   it('short-circuits Jupiter calls for spl_transfer intents', async () => {
     const state = {
-      intent: 'transfer 0.01 SOL to EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+      intent:
+        'transfer 0.01 SOL to EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
       pubkey: '11111111111111111111111111111111',
       runId: 'run-id',
       steps: [],
@@ -243,10 +378,14 @@ describe('policyRouter', () => {
   }
 
   it('routes to select_route only for jupiter protocol', () => {
-    expect(policyRouter(makeState({ protocol: 'jupiter' }))).toBe('select_route');
+    expect(policyRouter(makeState({ protocol: 'jupiter' }))).toBe(
+      'select_route',
+    );
   });
 
   it('ends route for spl_transfer protocol', () => {
-    expect(policyRouter(makeState({ protocol: 'spl_transfer' }))).toBe('__end__');
+    expect(policyRouter(makeState({ protocol: 'spl_transfer' }))).toBe(
+      '__end__',
+    );
   });
 });

@@ -42,7 +42,10 @@ export class HistoryEventsService {
           },
         );
       } catch (error) {
-        if (!this.isRetryableAppendError(error) || attempt === APPEND_MAX_ATTEMPTS) {
+        if (
+          !this.isRetryableAppendError(error) ||
+          attempt === APPEND_MAX_ATTEMPTS
+        ) {
           throw error;
         }
       }

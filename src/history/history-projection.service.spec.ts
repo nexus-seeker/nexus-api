@@ -38,8 +38,15 @@ describe('HistoryProjectionService', () => {
 
     expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 1 } }),
-        data: expect.objectContaining({ status: 'started', intent: 'Swap 0.1 SOL to USDC', lastEventSeq: 1 }),
+        where: expect.objectContaining({
+          runId: 'run-1',
+          lastEventSeq: { lt: 1 },
+        }),
+        data: expect.objectContaining({
+          status: 'started',
+          intent: 'Swap 0.1 SOL to USDC',
+          lastEventSeq: 1,
+        }),
       }),
     );
   });
@@ -58,7 +65,10 @@ describe('HistoryProjectionService', () => {
 
     expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 2 } }),
+        where: expect.objectContaining({
+          runId: 'run-1',
+          lastEventSeq: { lt: 2 },
+        }),
         data: expect.objectContaining({ lastEventSeq: 2 }),
       }),
     );
@@ -97,10 +107,16 @@ describe('HistoryProjectionService', () => {
 
     expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 3 } }),
+        where: expect.objectContaining({
+          runId: 'run-1',
+          lastEventSeq: { lt: 3 },
+        }),
         data: expect.objectContaining({
           lastEventSeq: 3,
-          latestStep: expect.objectContaining({ node: 'assemble_tx', status: 'success' }),
+          latestStep: expect.objectContaining({
+            node: 'assemble_tx',
+            status: 'success',
+          }),
         }),
       }),
     );
@@ -120,7 +136,10 @@ describe('HistoryProjectionService', () => {
 
     expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 4 } }),
+        where: expect.objectContaining({
+          runId: 'run-1',
+          lastEventSeq: { lt: 4 },
+        }),
         data: expect.objectContaining({
           status: 'completed',
           lastEventSeq: 4,
@@ -156,8 +175,15 @@ describe('HistoryProjectionService', () => {
 
     expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ runId: 'run-1', lastEventSeq: { lt: 5 } }),
-        data: expect.objectContaining({ status: 'rejected', rejectedReason: 'Rejected by policy checks', lastEventSeq: 5 }),
+        where: expect.objectContaining({
+          runId: 'run-1',
+          lastEventSeq: { lt: 5 },
+        }),
+        data: expect.objectContaining({
+          status: 'rejected',
+          rejectedReason: 'Rejected by policy checks',
+          lastEventSeq: 5,
+        }),
       }),
     );
 
@@ -169,6 +195,39 @@ describe('HistoryProjectionService', () => {
           role: 'agent',
           content: 'Rejected by policy checks',
           eventAt: new Date('2026-02-28T12:04:00.000Z'),
+        }),
+      }),
+    );
+  });
+
+  it('prefers response content for run_rejected messages and preserves rejectedReason', async () => {
+    const { prisma, service } = createService();
+
+    await service.project({
+      runId: 'run-1',
+      pubkey: 'pk',
+      type: 'run_rejected',
+      seq: 6,
+      eventAt: new Date('2026-03-03T12:00:00.000Z'),
+      payload: {
+        reason: 'Invalid amount',
+        response: 'I could not complete the transfer. Try 0.5 SOL.',
+      },
+    });
+
+    expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'rejected',
+          rejectedReason: 'Invalid amount',
+        }),
+      }),
+    );
+
+    expect(prisma.conversationMessage.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          content: 'I could not complete the transfer. Try 0.5 SOL.',
         }),
       }),
     );
@@ -235,7 +294,10 @@ describe('HistoryProjectionService', () => {
 
     expect(prisma.agentRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ runId: 'run-atomic', lastEventSeq: { lt: 9 } }),
+        where: expect.objectContaining({
+          runId: 'run-atomic',
+          lastEventSeq: { lt: 9 },
+        }),
         data: expect.objectContaining({
           status: 'completed',
           completedAt: new Date('2026-02-28T12:10:00.000Z'),
@@ -294,7 +356,10 @@ describe('HistoryProjectionService', () => {
     expect(prisma.agentRun.updateMany).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        where: expect.objectContaining({ runId: 'run-race', lastEventSeq: { lt: 3 } }),
+        where: expect.objectContaining({
+          runId: 'run-race',
+          lastEventSeq: { lt: 3 },
+        }),
       }),
     );
   });

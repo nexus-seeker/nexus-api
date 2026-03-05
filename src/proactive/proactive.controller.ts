@@ -10,7 +10,10 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
-import type { ProactiveFeedResponse, RecommendationFeedbackRequest } from '../contracts/mvp';
+import type {
+  ProactiveFeedResponse,
+  RecommendationFeedbackRequest,
+} from '../contracts/mvp';
 import { EventIntakeService } from './event-intake.service';
 import type { IngestProactiveEventResult } from './event-intake.service';
 import { IngestProactiveEventDto } from './ingest-proactive-event.dto';
@@ -28,7 +31,9 @@ export class ProactiveController {
   ) {}
 
   @Post('events')
-  async ingestEvent(@Body() body: IngestProactiveEventDto): Promise<IngestProactiveEventResult> {
+  async ingestEvent(
+    @Body() body: IngestProactiveEventDto,
+  ): Promise<IngestProactiveEventResult> {
     return this.eventIntakeService.ingest({
       wallet: body.wallet,
       source: body.source,

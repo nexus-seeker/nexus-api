@@ -22,7 +22,9 @@ describe('ReceiptsController', () => {
     };
     const controller = new ReceiptsController(receiptsService as any);
 
-    await expect(controller.getReceipts('', '20')).rejects.toThrow(BadRequestException);
+    await expect(controller.getReceipts('', '20')).rejects.toThrow(
+      BadRequestException,
+    );
     expect(receiptsService.getReceipts).not.toHaveBeenCalled();
   });
 
@@ -32,7 +34,9 @@ describe('ReceiptsController', () => {
     };
     const controller = new ReceiptsController(receiptsService as any);
 
-    await expect(controller.getReceipts('invalid-pubkey', '20')).rejects.toThrow(BadRequestException);
+    await expect(
+      controller.getReceipts('invalid-pubkey', '20'),
+    ).rejects.toThrow(BadRequestException);
     expect(receiptsService.getReceipts).not.toHaveBeenCalled();
   });
 
@@ -42,7 +46,9 @@ describe('ReceiptsController', () => {
     };
     const controller = new ReceiptsController(receiptsService as any);
 
-    await expect(controller.getReceipts(TEST_PUBKEY, '0')).rejects.toThrow(BadRequestException);
+    await expect(controller.getReceipts(TEST_PUBKEY, '0')).rejects.toThrow(
+      BadRequestException,
+    );
     expect(receiptsService.getReceipts).not.toHaveBeenCalled();
   });
 
@@ -52,7 +58,9 @@ describe('ReceiptsController', () => {
     };
     const controller = new ReceiptsController(receiptsService as any);
 
-    await expect(controller.getReceipts(TEST_PUBKEY, '10.5')).rejects.toThrow(BadRequestException);
+    await expect(controller.getReceipts(TEST_PUBKEY, '10.5')).rejects.toThrow(
+      BadRequestException,
+    );
     expect(receiptsService.getReceipts).not.toHaveBeenCalled();
   });
 });

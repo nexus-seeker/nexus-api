@@ -46,7 +46,7 @@ export interface AgentState {
   // Analysis
   analysisType?: 'wallet' | 'token';
   analysisSubject?: string; // wallet pubkey or token mint/symbol
-  agentMessage?: string;   // plain-text response for non-tx intents
+  agentMessage?: string; // plain-text response for non-tx intents
 
   // Policy check
   policyValid?: boolean;

@@ -3,8 +3,8 @@ import { PolicyController } from './policy.controller';
 import { PolicyService } from './policy.service';
 
 @Module({
-    controllers: [PolicyController],
-    providers: [PolicyService],
-    exports: [PolicyService],
+  controllers: [PolicyController],
+  providers: [PolicyService],
+  exports: [PolicyService],
 })
-export class PolicyModule { }
+export class PolicyModule {}

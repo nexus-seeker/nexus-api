@@ -11,7 +11,10 @@ describe('AgentController execute', () => {
       executeAgent: jest.fn(),
     };
     const runStream = {};
-    const controller = new AgentController(agentService as any, runStream as any);
+    const controller = new AgentController(
+      agentService as any,
+      runStream as any,
+    );
 
     const result = await controller.execute({
       intent: 'swap 0.1 SOL to USDC',
@@ -31,9 +34,14 @@ describe('AgentController execute', () => {
       startAgentRun: jest.fn(),
     };
     const runStream = {};
-    const controller = new AgentController(agentService as any, runStream as any);
+    const controller = new AgentController(
+      agentService as any,
+      runStream as any,
+    );
 
-    await expect(controller.execute({ intent: '', pubkey: 'x' })).resolves.toEqual({
+    await expect(
+      controller.execute({ intent: '', pubkey: 'x' }),
+    ).resolves.toEqual({
       error: 'Both intent and pubkey are required',
     });
 
@@ -45,7 +53,10 @@ describe('AgentController execute', () => {
       startAgentRun: jest.fn(),
     };
     const runStream = {};
-    const controller = new AgentController(agentService as any, runStream as any);
+    const controller = new AgentController(
+      agentService as any,
+      runStream as any,
+    );
 
     await expect(controller.execute(undefined as any)).resolves.toEqual({
       error: 'Both intent and pubkey are required',

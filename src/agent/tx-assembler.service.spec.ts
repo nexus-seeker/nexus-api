@@ -18,18 +18,23 @@ function toJupiterIx(programId: string, byte: number) {
 
 describe('TxAssemblerService', () => {
   const owner = new PublicKey('11111111111111111111111111111111');
-  const kawulaProgramId = new PublicKey('DxV7vXf919YddC74X726PpsrPpHLXNZtdBsk6Lweh3HJ');
+  const kawulaProgramId = new PublicKey(
+    'DxV7vXf919YddC74X726PpsrPpHLXNZtdBsk6Lweh3HJ',
+  );
 
-  const createSolanaMock = (overrides?: Partial<SolanaService>) => ({
-    getProgramId: jest.fn().mockReturnValue(kawulaProgramId),
-    findProfilePDA: jest.fn().mockReturnValue([owner, 255]),
-    findPolicyPDA: jest.fn().mockReturnValue([owner, 255]),
-    findReceiptPDA: jest.fn().mockReturnValue([owner, 255]),
-    fetchPolicyVault: jest.fn().mockResolvedValue({ nextReceiptId: 9 }),
-    resolveAddressLookupTables: jest.fn().mockResolvedValue([]),
-    buildVersionedTransaction: jest.fn().mockResolvedValue('assembled-base64'),
-    ...overrides,
-  }) as unknown as SolanaService;
+  const createSolanaMock = (overrides?: Partial<SolanaService>) =>
+    ({
+      getProgramId: jest.fn().mockReturnValue(kawulaProgramId),
+      findProfilePDA: jest.fn().mockReturnValue([owner, 255]),
+      findPolicyPDA: jest.fn().mockReturnValue([owner, 255]),
+      findReceiptPDA: jest.fn().mockReturnValue([owner, 255]),
+      fetchPolicyVault: jest.fn().mockResolvedValue({ nextReceiptId: 9 }),
+      resolveAddressLookupTables: jest.fn().mockResolvedValue([]),
+      buildVersionedTransaction: jest
+        .fn()
+        .mockResolvedValue('assembled-base64'),
+      ...overrides,
+    }) as unknown as SolanaService;
 
   it('does not expose a placeholder check_and_record ix builder', () => {
     const solana = createSolanaMock();
@@ -72,7 +77,13 @@ describe('TxAssemblerService', () => {
       service.assembleTransaction(owner, 100_000_000, 'jupiter', {
         swapInstruction: {
           programId: 'JUP6LkbZbjS1jKKwapdHNy74zcZ3L7N4j7n8Yq7X7qf',
-          accounts: [{ pubkey: '11111111111111111111111111111111', isSigner: false, isWritable: false }],
+          accounts: [
+            {
+              pubkey: '11111111111111111111111111111111',
+              isSigner: false,
+              isWritable: false,
+            },
+          ],
           data: 12345,
         },
       }),
@@ -96,7 +107,10 @@ describe('TxAssemblerService', () => {
     const cleanupProgram = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
     const jupiterInstructions = {
-      setupInstructions: [toJupiterIx(setupOneProgram, 1), toJupiterIx(setupTwoProgram, 2)],
+      setupInstructions: [
+        toJupiterIx(setupOneProgram, 1),
+        toJupiterIx(setupTwoProgram, 2),
+      ],
       swapInstruction: toJupiterIx(swapProgram, 3),
       cleanupInstruction: toJupiterIx(cleanupProgram, 4),
       addressLookupTableAddresses: [
@@ -122,23 +136,24 @@ describe('TxAssemblerService', () => {
 
     expect(buildCall[0]).toEqual(owner);
     expect(buildCall[2]).toEqual(resolvedAlts);
-    expect(passedInstructions[0].programId.toBase58()).toBe(kawulaProgramId.toBase58());
+    expect(passedInstructions[0].programId.toBase58()).toBe(
+      kawulaProgramId.toBase58(),
+    );
 
     const checkIxData = Buffer.from(passedInstructions[0].data);
     const protocol = 'jupiter';
     const expectedSize = 8 + 8 + 4 + Buffer.byteLength(protocol, 'utf8');
     expect(checkIxData.length).toBe(expectedSize);
 
-    expect(passedInstructions.slice(1).map((ix: any) => ix.programId.toBase58())).toEqual([
-      setupOneProgram,
-      setupTwoProgram,
-      swapProgram,
-      cleanupProgram,
-    ]);
+    expect(
+      passedInstructions.slice(1).map((ix: any) => ix.programId.toBase58()),
+    ).toEqual([setupOneProgram, setupTwoProgram, swapProgram, cleanupProgram]);
   });
 
   it('assembles SPL transfer with check_and_record first', async () => {
-    const recipient = new PublicKey('EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ');
+    const recipient = new PublicKey(
+      'EP4C7RTzhTPqTZZ8fUzfSu443QawGfDUDYjKgWFPfBfZ',
+    );
     const solana = createSolanaMock({
       fetchPolicyVault: jest.fn().mockResolvedValue({ nextReceiptId: 11 }),
     });
@@ -157,8 +172,12 @@ describe('TxAssemblerService', () => {
     expect(buildCall[0]).toEqual(owner);
     expect(buildCall[2]).toEqual([]);
     expect(passedInstructions).toHaveLength(2);
-    expect(passedInstructions[0].programId.toBase58()).toBe(kawulaProgramId.toBase58());
-    expect(passedInstructions[1].programId.toBase58()).toBe('11111111111111111111111111111111');
+    expect(passedInstructions[0].programId.toBase58()).toBe(
+      kawulaProgramId.toBase58(),
+    );
+    expect(passedInstructions[1].programId.toBase58()).toBe(
+      '11111111111111111111111111111111',
+    );
   });
 
   it('retries without cleanup instruction when first assembly overflows transaction size', async () => {
@@ -175,28 +194,32 @@ describe('TxAssemblerService', () => {
 
     const service = new TxAssemblerService(solana);
 
-    const txBase64 = await service.assembleTransaction(owner, 100_000_000, 'jupiter', {
-      setupInstructions: [toJupiterIx(setupProgram, 1)],
-      swapInstruction: toJupiterIx(swapProgram, 2),
-      cleanupInstruction: toJupiterIx(cleanupProgram, 3),
-      addressLookupTableAddresses: [],
-    });
+    const txBase64 = await service.assembleTransaction(
+      owner,
+      100_000_000,
+      'jupiter',
+      {
+        setupInstructions: [toJupiterIx(setupProgram, 1)],
+        swapInstruction: toJupiterIx(swapProgram, 2),
+        cleanupInstruction: toJupiterIx(cleanupProgram, 3),
+        addressLookupTableAddresses: [],
+      },
+    );
 
     expect(txBase64).toBe('assembled-base64');
     expect((solana as any).buildVersionedTransaction).toHaveBeenCalledTimes(2);
 
-    const firstCallInstructions = (solana as any).buildVersionedTransaction.mock.calls[0][1];
-    const secondCallInstructions = (solana as any).buildVersionedTransaction.mock.calls[1][1];
+    const firstCallInstructions = (solana as any).buildVersionedTransaction.mock
+      .calls[0][1];
+    const secondCallInstructions = (solana as any).buildVersionedTransaction
+      .mock.calls[1][1];
 
-    expect(firstCallInstructions.slice(1).map((ix: any) => ix.programId.toBase58())).toEqual([
-      setupProgram,
-      swapProgram,
-      cleanupProgram,
-    ]);
+    expect(
+      firstCallInstructions.slice(1).map((ix: any) => ix.programId.toBase58()),
+    ).toEqual([setupProgram, swapProgram, cleanupProgram]);
 
-    expect(secondCallInstructions.slice(1).map((ix: any) => ix.programId.toBase58())).toEqual([
-      setupProgram,
-      swapProgram,
-    ]);
+    expect(
+      secondCallInstructions.slice(1).map((ix: any) => ix.programId.toBase58()),
+    ).toEqual([setupProgram, swapProgram]);
   });
 });

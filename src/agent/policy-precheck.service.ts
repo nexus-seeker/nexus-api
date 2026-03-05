@@ -16,7 +16,10 @@ function normalizeNonNegativeFinite(value: unknown): number {
 
 function formatLamportsAsSol(lamports: number): string {
   const sol = lamports / LAMPORTS_PER_SOL;
-  return sol.toFixed(9).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+  return sol
+    .toFixed(9)
+    .replace(/\.0+$/, '')
+    .replace(/(\.\d*?)0+$/, '$1');
 }
 
 export interface PolicyPrecheckInput {
@@ -41,7 +44,7 @@ export interface PolicyPrecheckResult {
 
 @Injectable()
 export class PolicyPrecheckService {
-  constructor(private readonly solanaService: SolanaService) { }
+  constructor(private readonly solanaService: SolanaService) {}
 
   async precheck(input: PolicyPrecheckInput): Promise<PolicyPrecheckResult> {
     const { pubkey, amountLamports, protocol } = input;
@@ -83,7 +86,8 @@ export class PolicyPrecheckService {
     if (!vault) {
       return {
         allowed: false,
-        reason: 'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.',
+        reason:
+          'Wallet not onboarded. Call POST /policy/onboard to initialize your profile and policy.',
         rejectionField: 'not_onboarded',
         amountLamports: numericAmountLamports,
         protocol,
@@ -102,7 +106,8 @@ export class PolicyPrecheckService {
 
     const effectiveSpendLamports =
       nowTs - lastResetTs > DAILY_WINDOW_SECONDS ? 0 : currentSpend;
-    const projectedSpendLamports = effectiveSpendLamports + numericAmountLamports;
+    const projectedSpendLamports =
+      effectiveSpendLamports + numericAmountLamports;
 
     const base: PolicyPrecheckResult = {
       allowed: true,
@@ -135,7 +140,10 @@ export class PolicyPrecheckService {
     }
 
     if (projectedSpendLamports > dailyMaxLamports) {
-      const remainingLamports = Math.max(0, dailyMaxLamports - effectiveSpendLamports);
+      const remainingLamports = Math.max(
+        0,
+        dailyMaxLamports - effectiveSpendLamports,
+      );
       return {
         ...base,
         allowed: false,

@@ -39,7 +39,9 @@ describe('PolicyPrecheckService', () => {
 
     expect(result.allowed).toBe(false);
     expect(result.rejectionField).toBe('amount_lamports');
-    expect(result.reason).toBe('Invalid amountLamports: must be a finite positive integer.');
+    expect(result.reason).toBe(
+      'Invalid amountLamports: must be a finite positive integer.',
+    );
     expect(solanaService.fetchPolicyVault).not.toHaveBeenCalled();
   });
 
@@ -58,7 +60,9 @@ describe('PolicyPrecheckService', () => {
 
     expect(result.allowed).toBe(false);
     expect(result.rejectionField).toBe('pubkey');
-    expect(result.reason).toBe('Invalid pubkey: must be a valid Solana public key.');
+    expect(result.reason).toBe(
+      'Invalid pubkey: must be a valid Solana public key.',
+    );
     expect(solanaService.fetchPolicyVault).not.toHaveBeenCalled();
   });
 
@@ -155,7 +159,9 @@ describe('PolicyPrecheckService', () => {
 
     expect(result.allowed).toBe(false);
     expect(result.rejectionField).toBe('policy_inactive');
-    expect(result.reason).toBe('Policy is inactive. Activate your policy to continue.');
+    expect(result.reason).toBe(
+      'Policy is inactive. Activate your policy to continue.',
+    );
   });
 
   it('rejects when protocol is not allowed', async () => {
@@ -179,7 +185,9 @@ describe('PolicyPrecheckService', () => {
 
     expect(result.allowed).toBe(false);
     expect(result.rejectionField).toBe('protocol_not_allowed');
-    expect(result.reason).toBe('Protocol "jupiter" is not allowed by your policy.');
+    expect(result.reason).toBe(
+      'Protocol "jupiter" is not allowed by your policy.',
+    );
   });
 
   it('rejects when daily max would be exceeded', async () => {

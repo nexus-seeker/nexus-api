@@ -7,4 +7,4 @@ import { MarinadeService } from './marinade.service';
   providers: [RaydiumService, RouteSelectorService, MarinadeService],
   exports: [RaydiumService, RouteSelectorService, MarinadeService],
 })
-export class ProtocolsModule { }
+export class ProtocolsModule {}
