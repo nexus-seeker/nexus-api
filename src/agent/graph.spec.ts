@@ -177,6 +177,43 @@ describe('parseIntentNode', () => {
     expect(result.recipientPubkey).toBe('bene.skr');
   });
 
+  it('extracts recipients for multi-send "each" intents when parser omits recipients', async () => {
+    mockInvoke.mockResolvedValue({
+      content: JSON.stringify({
+        action: 'multi_send',
+        tokenIn: 'SOL',
+        amountSOL: 0.01,
+        protocol: 'multi_send',
+      }),
+    });
+
+    const result = await parseIntentNode(
+      {
+        intent:
+          'send 0.01 sol each to DXq4yXwQy8LBqwt6Qyi6rFCmDNmw3BUv35A2mNQ6LEZr and 7o64HNEkZZgTFa9fg2EWsS1stsbzUuZV9CziawESFUN1',
+        pubkey: '11111111111111111111111111111111',
+        runId: 'run-id',
+        steps: [],
+      },
+      mockLlm,
+      '',
+    );
+
+    expect(result.rejectionReason).toBeUndefined();
+    expect(result.protocol).toBe('multi_send');
+    expect(result.recipients).toEqual([
+      {
+        pubkey: 'DXq4yXwQy8LBqwt6Qyi6rFCmDNmw3BUv35A2mNQ6LEZr',
+        amountLamports: 10_000_000,
+      },
+      {
+        pubkey: '7o64HNEkZZgTFa9fg2EWsS1stsbzUuZV9CziawESFUN1',
+        amountLamports: 10_000_000,
+      },
+    ]);
+    expect(result.amountLamports).toBe(20_000_000);
+  });
+
   it('rejects when LLM returns an error field', async () => {
     mockInvoke.mockResolvedValue({
       content: JSON.stringify({ error: 'ambiguous intent' }),

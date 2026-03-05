@@ -112,6 +112,108 @@ function pickRecipientFromParsedPayload(parsed: ParsedIntentPayload): string | u
   return undefined;
 }
 
+function normalizeRecipientValue(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return normalizePubkey(trimmed) || normalizeDomain(trimmed);
+}
+
+function extractRecipientValuesFromIntent(intent: string): string[] {
+  const matches = intent.match(
+    /[1-9A-HJ-NP-Za-km-z]{32,44}|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:skr|sol)/gi,
+  );
+
+  if (!matches) {
+    return [];
+  }
+
+  const recipients: string[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of matches) {
+    const normalized = normalizePubkey(candidate) || normalizeDomain(candidate);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    recipients.push(normalized);
+  }
+
+  return recipients;
+}
+
+function parseRecipientAmountLamports(
+  recipient: Record<string, unknown>,
+  fallbackEachAmountLamports: number,
+  isEachDistribution: boolean,
+): number {
+  const directLamports = parsePositiveNumber(recipient.amountLamports);
+  if (directLamports !== null) {
+    return Math.round(directLamports);
+  }
+
+  const amountSol = parsePositiveNumber(recipient.amountSOL ?? recipient.amount);
+  if (amountSol !== null) {
+    return Math.round(amountSol * 1e9);
+  }
+
+  if (isEachDistribution && fallbackEachAmountLamports > 0) {
+    return fallbackEachAmountLamports;
+  }
+
+  return 0;
+}
+
+function normalizeRecipientsFromParsedPayload(
+  rawRecipients: unknown,
+  fallbackEachAmountLamports: number,
+  isEachDistribution: boolean,
+): Array<{ pubkey: string; amountLamports: number }> {
+  if (!Array.isArray(rawRecipients)) {
+    return [];
+  }
+
+  const recipients: Array<{ pubkey: string; amountLamports: number }> = [];
+
+  for (const rawRecipient of rawRecipients) {
+    if (!rawRecipient || typeof rawRecipient !== 'object') {
+      continue;
+    }
+
+    const recipient = rawRecipient as Record<string, unknown>;
+    const pubkey =
+      normalizeRecipientValue(recipient.pubkey) ||
+      normalizeRecipientValue(recipient.recipientPubkey) ||
+      normalizeRecipientValue(recipient.recipient) ||
+      normalizeRecipientValue(recipient.to) ||
+      normalizeRecipientValue(recipient.receiver) ||
+      normalizeRecipientValue(recipient.address);
+
+    if (!pubkey) {
+      continue;
+    }
+
+    recipients.push({
+      pubkey,
+      amountLamports: parseRecipientAmountLamports(
+        recipient,
+        fallbackEachAmountLamports,
+        isEachDistribution,
+      ),
+    });
+  }
+
+  return recipients;
+}
+
 function normalizeProtocol(
   action: string | undefined,
   protocol: unknown,
@@ -360,6 +462,34 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
     const recipientPubkey = parsedRecipient
       ? normalizePubkey(parsedRecipient) || normalizeDomain(parsedRecipient)
       : extractPubkeyFromIntent(state.intent) || extractDomainFromIntent(state.intent);
+    const isMultiSend = protocol === 'multi_send';
+    const isEachDistribution = isMultiSend && /\beach\b/i.test(state.intent);
+
+    let recipients = normalizeRecipientsFromParsedPayload(
+      parsed.recipients,
+      amountLamports,
+      isEachDistribution,
+    );
+
+    if (isMultiSend && recipients.length === 0) {
+      const inferredRecipients = extractRecipientValuesFromIntent(state.intent);
+      if (inferredRecipients.length > 0) {
+        recipients = inferredRecipients.map((pubkey) => ({
+          pubkey,
+          amountLamports: isEachDistribution ? amountLamports : 0,
+        }));
+      }
+    }
+
+    if (isMultiSend) {
+      const recipientsTotalLamports = recipients.reduce(
+        (sum, recipient) => sum + recipient.amountLamports,
+        0,
+      );
+      if (recipientsTotalLamports > 0) {
+        amountLamports = recipientsTotalLamports;
+      }
+    }
 
     return {
       action: parsed.action,
@@ -369,10 +499,7 @@ If intent is ambiguous or unsafe, return { "error": "reason" }.`,
       tokenOut,
       recipientPubkey,
       // For multi-send
-      recipients: parsed.recipients?.map((r: any) => ({
-        pubkey: normalizePubkey(r.pubkey) || r.pubkey,
-        amountLamports: Math.round((r.amountSOL || 0) * 1e9),
-      })),
+      recipients: recipients.length > 0 ? recipients : undefined,
       // For analyze
       analysisType: parsed.analysisType,
       analysisSubject: parsed.subject || state.pubkey,
